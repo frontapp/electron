@@ -213,8 +213,13 @@ void WebContentsPreferences::AppendCommandLineSwitches(
 
   // --background-color.
   std::string s;
-  if (dict_.GetString(options::kBackgroundColor, &s))
+  if (dict_.GetString(options::kBackgroundColor, &s)) {
     command_line->AppendSwitchASCII(switches::kBackgroundColor, s);
+  } else if (!(dict_.GetBoolean(options::kOffscreen, &b) && b)) {
+    // For non-OSR WebContents, we expect to have white background, see
+    // https://github.com/electron/electron/issues/13764 for more.
+    command_line->AppendSwitchASCII(switches::kBackgroundColor, "#fff");
+  }
 
   // --guest-instance-id, which is used to identify guest WebContents.
   int guest_instance_id = 0;
@@ -326,6 +331,10 @@ void WebContentsPreferences::OverrideWebkitPrefs(
   std::string encoding;
   if (dict_.GetString("defaultEncoding", &encoding))
     prefs->default_encoding = encoding;
+
+  bool node_integration = false;
+  dict_.GetBoolean(options::kNodeIntegration, &node_integration);
+  prefs->node_integration = node_integration;
 }
 
 bool WebContentsPreferences::GetInteger(const base::StringPiece& attribute_name,

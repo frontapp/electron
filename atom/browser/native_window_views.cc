@@ -342,7 +342,7 @@ bool NativeWindowViews::IsFocused() {
 void NativeWindowViews::Show() {
   if (is_modal() && NativeWindow::parent() &&
       !widget()->native_widget_private()->IsVisible())
-    NativeWindow::parent()->SetEnabled(false);
+    static_cast<NativeWindowViews*>(parent())->IncrementChildModals();
 
   widget()->native_widget_private()->ShowWithWindowState(GetRestoredState());
 
@@ -367,7 +367,7 @@ void NativeWindowViews::ShowInactive() {
 
 void NativeWindowViews::Hide() {
   if (is_modal() && NativeWindow::parent())
-    NativeWindow::parent()->SetEnabled(true);
+    static_cast<NativeWindowViews*>(parent())->DecrementChildModals();
 
   widget()->Hide();
 
@@ -391,16 +391,34 @@ bool NativeWindowViews::IsEnabled() {
 #endif
 }
 
+void NativeWindowViews::IncrementChildModals() {
+  num_modal_children_++;
+  SetEnabledInternal(ShouldBeEnabled());
+}
+
+void NativeWindowViews::DecrementChildModals() {
+  if (num_modal_children_ > 0) {
+    num_modal_children_--;
+  }
+  SetEnabledInternal(ShouldBeEnabled());
+}
+
 void NativeWindowViews::SetEnabled(bool enable) {
-  // Handle multiple calls of SetEnabled correctly.
-  if (enable) {
-    --disable_count_;
-    if (disable_count_ != 0)
-      return;
-  } else {
-    ++disable_count_;
-    if (disable_count_ != 1)
-      return;
+  if (enable != is_enabled_) {
+    is_enabled_ = enable;
+    SetEnabledInternal(ShouldBeEnabled());
+  }
+}
+
+bool NativeWindowViews::ShouldBeEnabled() {
+  return is_enabled_ && (num_modal_children_ == 0);
+}
+
+void NativeWindowViews::SetEnabledInternal(bool enable) {
+  if (enable && IsEnabled()) {
+    return;
+  } else if (!enable && !IsEnabled()) {
+    return;
   }
 
 #if defined(OS_WIN)
@@ -585,6 +603,7 @@ void NativeWindowViews::SetResizable(bool resizable) {
     // both the minimum and maximum size to the window size to achieve it.
     if (resizable) {
       SetContentSizeConstraints(old_size_constraints_);
+      SetMaximizable(maximizable_);
     } else {
       old_size_constraints_ = GetContentSizeConstraints();
       resizable_ = false;
@@ -872,14 +891,17 @@ void NativeWindowViews::SetFocusable(bool focusable) {
 
 void NativeWindowViews::SetMenu(AtomMenuModel* menu_model) {
 #if defined(USE_X11)
-  if (menu_model == nullptr)
+  if (menu_model == nullptr) {
     global_menu_bar_.reset();
+    root_view_->UnregisterAcceleratorsWithFocusManager();
+  }
 
   if (!global_menu_bar_ && ShouldUseGlobalMenuBar())
     global_menu_bar_.reset(new GlobalMenuBarX11(this));
 
   // Use global application menu bar when possible.
   if (global_menu_bar_ && global_menu_bar_->IsServerStarted()) {
+    root_view_->RegisterAcceleratorsWithFocusManager(menu_model);
     global_menu_bar_->SetMenu(menu_model);
     return;
   }
@@ -1151,10 +1173,10 @@ void NativeWindowViews::OnWidgetBoundsChanged(views::Widget* changed_widget,
 }
 
 void NativeWindowViews::DeleteDelegate() {
-  if (is_modal() && NativeWindow::parent()) {
-    auto* parent = NativeWindow::parent();
+  if (is_modal() && this->parent()) {
+    auto* parent = this->parent();
     // Enable parent window after current window gets closed.
-    parent->SetEnabled(true);
+    static_cast<NativeWindowViews*>(parent)->DecrementChildModals();
     // Focus on parent window.
     parent->Focus(true);
   }

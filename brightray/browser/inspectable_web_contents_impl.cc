@@ -214,8 +214,6 @@ InspectableWebContentsImpl::InspectableWebContentsImpl(
       is_guest_(is_guest),
       view_(CreateInspectableContentsView(this)),
       weak_factory_(this) {
-  if (is_guest)
-    return;
   auto* bounds_dict = pref_service_->GetDictionary(kDevToolsBoundsPref);
   if (bounds_dict) {
     DictionaryToRect(*bounds_dict, &devtools_bounds_);
@@ -226,7 +224,7 @@ InspectableWebContentsImpl::InspectableWebContentsImpl(
     }
     if (!IsPointInScreen(devtools_bounds_.origin())) {
       gfx::Rect display;
-      if (web_contents->GetNativeView()) {
+      if (!is_guest && web_contents->GetNativeView()) {
         display = display::Screen::GetScreen()
                       ->GetDisplayNearestView(web_contents->GetNativeView())
                       .bounds();
@@ -515,8 +513,9 @@ void InspectableWebContentsImpl::ShowItemInFolder(
     const std::string& file_system_path) {
   if (file_system_path.empty())
     return;
+
   base::FilePath path = base::FilePath::FromUTF8Unsafe(file_system_path);
-  platform_util::ShowItemInFolder(path);
+  platform_util::OpenItem(path);
 }
 
 void InspectableWebContentsImpl::SaveToFile(const std::string& url,

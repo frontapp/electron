@@ -455,31 +455,13 @@ describe('app module', () => {
       app.setLoginItemSettings({openAtLogin: false, path: updateExe, args: processStartArgs})
     })
 
-    it('returns the login item status of the app', done => {
-      app.setLoginItemSettings({openAtLogin: true})
-      expect(app.getLoginItemSettings()).to.deep.equal({
-        openAtLogin: true,
-        openAsHidden: false,
-        wasOpenedAtLogin: false,
-        wasOpenedAsHidden: false,
-        restoreState: false
-      })
-
-      app.setLoginItemSettings({openAtLogin: true, openAsHidden: true})
-      expect(app.getLoginItemSettings()).to.deep.equal({
-        openAtLogin: true,
-        openAsHidden: process.platform === 'darwin' && !process.mas, // Only available on macOS
-        wasOpenedAtLogin: false,
-        wasOpenedAsHidden: false,
-        restoreState: false
-      })
-
-      app.setLoginItemSettings({})
+    it('sets and returns the app as a login item', done => {
+      app.setLoginItemSettings({ openAtLogin: true })
       // Wait because login item settings are not applied immediately in MAS build
-      const delay = process.mas ? 100 : 0
+      const delay = process.mas ? 250 : 0
       setTimeout(() => {
         expect(app.getLoginItemSettings()).to.deep.equal({
-          openAtLogin: false,
+          openAtLogin: true,
           openAsHidden: false,
           wasOpenedAtLogin: false,
           wasOpenedAsHidden: false,
@@ -487,6 +469,37 @@ describe('app module', () => {
         })
         done()
       }, delay)
+    })
+
+    it('adds a login item that loads in hidden mode', done => {
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true })
+      // Wait because login item settings are not applied immediately in MAS build
+      const delay = process.mas ? 250 : 0
+      setTimeout(() => {
+        expect(app.getLoginItemSettings()).to.deep.equal({
+          openAtLogin: true,
+          openAsHidden: process.platform === 'darwin' && !process.mas, // Only available on macOS
+          wasOpenedAtLogin: false,
+          wasOpenedAsHidden: false,
+          restoreState: false
+        })
+        done()
+      }, delay)
+    })
+
+    it('correctly sets and unsets the LoginItem as hidden', function () {
+      if (process.platform !== 'darwin' || process.mas) this.skip()
+
+      expect(app.getLoginItemSettings().openAtLogin).to.be.false()
+      expect(app.getLoginItemSettings().openAsHidden).to.be.false()
+
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true })
+      expect(app.getLoginItemSettings().openAtLogin).to.be.true()
+      expect(app.getLoginItemSettings().openAsHidden).to.be.true()
+
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false })
+      expect(app.getLoginItemSettings().openAtLogin).to.be.true()
+      expect(app.getLoginItemSettings().openAsHidden).to.be.false()
     })
 
     it('allows you to pass a custom executable and arguments', function () {
@@ -795,8 +808,7 @@ describe('app module', () => {
     })
   })
 
-  // TODO(marshallofsound): [Ch66] Failed on Windows x64 + ia32 on CI, passes locally
-  xdescribe('getAppMetrics() API', () => {
+  describe('getAppMetrics() API', () => {
     it('returns memory and cpu stats of all running electron processes', () => {
       const appMetrics = app.getAppMetrics()
       expect(appMetrics).to.be.an('array').and.have.lengthOf.at.least(1, 'App memory info object is not > 0')
@@ -804,8 +816,13 @@ describe('app module', () => {
       const types = []
       for (const {memory, pid, type, cpu} of appMetrics) {
         expect(memory.workingSetSize).to.be.above(0, 'working set size is not > 0')
-        expect(memory.privateBytes).to.be.above(0, 'private bytes is not > 0')
-        expect(memory.sharedBytes).to.be.above(0, 'shared bytes is not > 0')
+
+        // windows causes failures here due to CI server configuration
+        if (process.platform !== 'win32') {
+          expect(memory.privateBytes).to.be.above(0, 'private bytes is not > 0')
+          expect(memory.sharedBytes).to.be.above(0, 'shared bytes is not > 0')
+        }
+
         expect(pid).to.be.above(0, 'pid is not > 0')
         expect(type).to.be.a('string').that.is.not.empty()
 
