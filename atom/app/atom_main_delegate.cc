@@ -133,7 +133,7 @@ bool AtomMainDelegate::BasicStartupComplete(int* exit_code) {
   // prevent output in the same line as the prompt.
   if (IsBrowserProcess(command_line))
     std::wcout << std::endl;
-#if defined(DEBUG)
+#if 1
   // Print logging to debug.log on Windows
   settings.logging_dest = logging::LOG_TO_ALL;
   settings.log_file = L"debug.log";

@@ -1,0 +1,709 @@
+From 7769a2ee935ffa1d6d5bc812d4abc0f3c2d48baf Mon Sep 17 00:00:00 2001
+From: Jeremy Spiegel <jeremy.spiegel@frontapp.com>
+Date: Wed, 2 Oct 2019 11:08:13 -0700
+Subject: [PATCH] Make CF_HDROP always available for virtual file
+
+---
+ .../browser/download/drag_download_file.cc    |  20 +-
+ content/browser/download/drag_download_file.h |   1 +
+ .../web_contents/web_contents_view_aura.cc    |   2 +-
+ ui/base/dragdrop/download_file_interface.h    |   1 +
+ .../dragdrop/os_exchange_data_provider_win.cc | 328 +++++++++++++++++-
+ .../dragdrop/os_exchange_data_provider_win.h  |  12 +
+ .../desktop_drag_drop_client_win.cc           |   3 +
+ 7 files changed, 358 insertions(+), 9 deletions(-)
+
+diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
+index c15e78c9ef1d..4b12d10e2413 100644
+--- a/content/browser/download/drag_download_file.cc
++++ b/content/browser/download/drag_download_file.cc
+@@ -28,6 +28,7 @@ namespace content {
+ namespace {
+ 
+ typedef base::Callback<void(bool)> OnCompleted;
++typedef base::Callback<void(int)> OnProgress;
+ 
+ }  // namespace
+ 
+@@ -47,9 +48,11 @@ class DragDownloadFile::DragDownloadFileUI
+       const std::string& referrer_encoding,
+       WebContents* web_contents,
+       scoped_refptr<base::SingleThreadTaskRunner> on_completed_task_runner,
+-      const OnCompleted& on_completed)
++      const OnCompleted& on_completed,
++      const OnProgress& on_progress)
+       : on_completed_task_runner_(on_completed_task_runner),
+         on_completed_(on_completed),
++        on_progress_(on_progress),
+         url_(url),
+         referrer_(referrer),
+         referrer_encoding_(referrer_encoding),
+@@ -158,8 +161,12 @@ class DragDownloadFile::DragDownloadFileUI
+       }
+       download_item_->RemoveObserver(this);
+       download_item_ = nullptr;
++    } else {
++      on_completed_task_runner_->PostTask(
++          FROM_HERE,
++          base::BindOnce(on_progress_,
++                          download_item_->PercentComplete()));
+     }
+-    // Ignore other states.
+   }
+ 
+   void OnDownloadDestroyed(download::DownloadItem* item) override {
+@@ -178,6 +185,7 @@ class DragDownloadFile::DragDownloadFileUI
+ 
+   scoped_refptr<base::SingleThreadTaskRunner> const on_completed_task_runner_;
+   OnCompleted on_completed_;
++  OnProgress on_progress_;
+   GURL url_;
+   Referrer referrer_;
+   std::string referrer_encoding_;
+@@ -205,6 +213,8 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
+   drag_ui_ = new DragDownloadFileUI(
+       url, referrer, referrer_encoding, web_contents, drag_task_runner_,
+       base::Bind(&DragDownloadFile::DownloadCompleted,
++                 weak_ptr_factory_.GetWeakPtr()),
++      base::Bind(&DragDownloadFile::DownloadProgressed,
+                  weak_ptr_factory_.GetWeakPtr()));
+   DCHECK(!file_path_.empty());
+ }
+@@ -272,6 +282,12 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
+     nested_loop_.Quit();
+ }
+ 
++void DragDownloadFile::DownloadProgressed(int percent_complete) {
++  CheckThread();
++
++  observer_->OnDownloadProgressed(percent_complete);
++}
++
+ void DragDownloadFile::CheckThread() {
+ #if defined(OS_WIN)
+   DCHECK(drag_task_runner_->BelongsToCurrentThread());
+diff --git a/content/browser/download/drag_download_file.h b/content/browser/download/drag_download_file.h
+index 635a9092c7bd..5ce775223e6a 100644
+--- a/content/browser/download/drag_download_file.h
++++ b/content/browser/download/drag_download_file.h
+@@ -55,6 +55,7 @@ class CONTENT_EXPORT DragDownloadFile : public ui::DownloadFileProvider {
+   ~DragDownloadFile() override;
+ 
+   void DownloadCompleted(bool is_successful);
++  void DownloadProgressed(int percent_complete);
+   void CheckThread();
+ 
+   base::FilePath file_path_;
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index 3b06cee64b44..11621d990358 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -221,7 +221,7 @@ void PrepareDragForDownload(
+           Referrer(page_url, drop_data.referrer_policy),
+           page_encoding,
+           web_contents);
+-  ui::OSExchangeData::DownloadFileInfo file_download(base::FilePath(),
++  ui::OSExchangeData::DownloadFileInfo file_download(download_path,
+                                                      download_file.get());
+   provider->SetDownloadFileInfo(file_download);
+ }
+diff --git a/ui/base/dragdrop/download_file_interface.h b/ui/base/dragdrop/download_file_interface.h
+index db82ff2d2c60..e1264d21a18b 100644
+--- a/ui/base/dragdrop/download_file_interface.h
++++ b/ui/base/dragdrop/download_file_interface.h
+@@ -28,6 +28,7 @@ class UI_BASE_EXPORT DownloadFileObserver
+     : public base::RefCountedThreadSafe<DownloadFileObserver> {
+  public:
+   virtual void OnDownloadCompleted(const base::FilePath& file_path) = 0;
++  virtual void OnDownloadProgressed(int percentComplete) = 0;
+   virtual void OnDownloadAborted() = 0;
+ 
+  protected:
+diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
+index db7425bbf14d..b2eb83eaa410 100644
+--- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
++++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
+@@ -7,22 +7,28 @@
+ #include <objbase.h>
+ #include <objidl.h>
+ #include <shlobj.h>
++#include <shlwapi.h>
+ #include <shobjidl.h>
+ #include <stdint.h>
++#include <windowsx.h>
+ #include <wrl/client.h>
+ 
+ #include <algorithm>
+ #include <iterator>
+ 
++#include "base/files/file.h"
+ #include "base/files/file_path.h"
+ #include "base/i18n/file_util_icu.h"
++#include "base/lazy_instance.h"
+ #include "base/logging.h"
+ #include "base/no_destructor.h"
+ #include "base/pickle.h"
+ #include "base/stl_util.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/win/current_module.h"
+ #include "base/win/scoped_hdc.h"
+ #include "base/win/scoped_hglobal.h"
++#include "base/win/wrapped_window_proc.h"
+ #include "net/base/filename_util.h"
+ #include "skia/ext/skia_utils_win.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+@@ -294,9 +300,12 @@ OSExchangeDataProviderWin::Clone() const {
+ }
+ 
+ void OSExchangeDataProviderWin::MarkOriginatedFromRenderer() {
++  // Needed for drops to VS Code to work
++#if 0
+   STGMEDIUM* storage = GetStorageForString(std::string());
+   data_->contents_.push_back(std::make_unique<DataObjectImpl::StoredDataInfo>(
+       GetRendererTaintFormatType().ToFormatEtc(), storage));
++#endif
+ }
+ 
+ bool OSExchangeDataProviderWin::DidOriginateFromRenderer() const {
+@@ -316,6 +325,7 @@ void OSExchangeDataProviderWin::SetString(const base::string16& data) {
+ 
+ void OSExchangeDataProviderWin::SetURL(const GURL& url,
+                                        const base::string16& title) {
++  LOG(INFO) << "SetURL url: " << url.spec() << " title: " << title;
+   // NOTE WELL:
+   // Every time you change the order of the first two CLIPFORMATS that get
+   // added here, you need to update the EnumerationViaCOM test case in
+@@ -384,6 +394,8 @@ void OSExchangeDataProviderWin::SetPickledData(
+ void OSExchangeDataProviderWin::SetFileContents(
+     const base::FilePath& filename,
+     const std::string& file_contents) {
++  LOG(INFO) << "SetFileContents filename: " << filename.value()
++            << ", file_contents: " << file_contents;
+   // Add CFSTR_FILEDESCRIPTOR
+   STGMEDIUM* storage = GetStorageForFileDescriptor(filename);
+   data_->contents_.push_back(std::make_unique<DataObjectImpl::StoredDataInfo>(
+@@ -438,6 +450,7 @@ bool OSExchangeDataProviderWin::GetURLAndTitle(
+ }
+ 
+ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
++  LOG(INFO) << "GetFilename";
+   std::vector<base::string16> filenames;
+   bool success = ClipboardUtil::GetFilenames(source_object_.Get(), &filenames);
+   if (success)
+@@ -447,6 +460,7 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
+ 
+ bool OSExchangeDataProviderWin::GetFilenames(
+     std::vector<FileInfo>* filenames) const {
++  LOG(INFO) << "GetFilenames";
+   std::vector<base::string16> filenames_local;
+   bool success =
+       ClipboardUtil::GetFilenames(source_object_.Get(), &filenames_local);
+@@ -530,13 +544,19 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
+ 
+ void OSExchangeDataProviderWin::SetDownloadFileInfo(
+     const OSExchangeData::DownloadFileInfo& download) {
++  LOG(INFO) << "SetDownloadFileInfo download.filename: "
++            << download.filename.value();
++  data_->download_file_provider_ = download.downloader.get();
++  data_->download_file_provider_->Start(data_.get());
++  base::File(download.filename, base::File::FLAG_CREATE);
+   // If the filename is not provided, set storage to NULL to indicate that
+   // the delay rendering will be used.
+   // TODO(dcheng): Is it actually possible for filename to be empty here? I
+   // think we always synthesize one in WebContentsDragWin.
+   STGMEDIUM* storage = NULL;
+   if (!download.filename.empty())
+-    GetStorageForFileNames({FileInfo(download.filename, base::FilePath())});
++    storage =
++        GetStorageForFileNames({FileInfo(download.filename, base::FilePath())});
+ 
+   // Add CF_HDROP.
+   auto info = std::make_unique<DataObjectImpl::StoredDataInfo>(
+@@ -545,7 +565,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
+   data_->contents_.push_back(std::move(info));
+ 
+   // Adding a download file always enables async mode.
+-  data_->SetAsyncMode(VARIANT_TRUE);
++  // data_->SetAsyncMode(VARIANT_TRUE);
+ }
+ 
+ void OSExchangeDataProviderWin::SetDragImage(
+@@ -686,9 +706,96 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
+     destination->pUnkForRelease->AddRef();
+ }
+ 
++std::wstring FormatFormatEtc(const FORMATETC* format_etc) {
++  std::wstring result = L"(";
++  WCHAR name[1024]{};
++  switch (format_etc->cfFormat) {
++    case CF_TEXT:
++      result += L"CF_TEXT";
++      break;
++    case CF_BITMAP:
++      result += L"CF_BITMAP";
++      break;
++    case CF_METAFILEPICT:
++      result += L"CF_METAFILEPICT";
++      break;
++    case CF_SYLK:
++      result += L"CF_SYLK";
++      break;
++    case CF_DIF:
++      result += L"CF_DIF";
++      break;
++    case CF_TIFF:
++      result += L"CF_TIFF";
++      break;
++    case CF_OEMTEXT:
++      result += L"CF_OEMTEXT";
++      break;
++    case CF_DIB:
++      result += L"CF_DIB";
++      break;
++    case CF_PALETTE:
++      result += L"CF_PALETTE";
++      break;
++    case CF_PENDATA:
++      result += L"CF_PENDATA";
++      break;
++    case CF_RIFF:
++      result += L"CF_RIFF";
++      break;
++    case CF_WAVE:
++      result += L"CF_WAVE";
++      break;
++    case CF_UNICODETEXT:
++      result += L"CF_UNICODETEXT";
++      break;
++    case CF_ENHMETAFILE:
++      result += L"CF_ENHMETAFILE";
++      break;
++    case CF_HDROP:
++      result += L"CF_HDROP";
++      break;
++    case CF_LOCALE:
++      result += L"CF_LOCALE";
++      break;
++    case CF_DIBV5:
++      result += L"CF_DIBV5";
++      break;
++    default: {
++      GetClipboardFormatName(format_etc->cfFormat, name, 1024);
++      result +=
++          (name[0] ? name : std::to_wstring(format_etc->cfFormat).c_str());
++    }
++  }
++
++  result += L" tymed: ";
++  if (format_etc->tymed & TYMED_HGLOBAL)
++    result += L"TYMED_HGLOBAL|";
++  if (format_etc->tymed & TYMED_FILE)
++    result += L"TYMED_FILE|";
++  if (format_etc->tymed & TYMED_ISTREAM)
++    result += L"TYMED_ISTREAM|";
++  if (format_etc->tymed & TYMED_ISTORAGE)
++    result += L"TYMED_ISTORAGE|";
++  if (format_etc->tymed & TYMED_GDI)
++    result += L"TYMED_GDI|";
++  if (format_etc->tymed & TYMED_MFPICT)
++    result += L"TYMED_MFPICT|";
++  if (format_etc->tymed & TYMED_ENHMF)
++    result += L"TYMED_ENHMF|";
++  result += L" lindex=";
++  result += std::to_wstring(format_etc->lindex).c_str();
++  result += L" dwAspect=";
++  result += std::to_wstring(format_etc->dwAspect).c_str();
++  result += L")";
++  return result;
++}
++
+ DataObjectImpl::StoredDataInfo::StoredDataInfo(const FORMATETC& format_etc,
+                                                STGMEDIUM* medium)
+     : format_etc(format_etc), medium(medium), owns_medium(true) {
++  LOG(INFO) << "StoredDataInfo::StoredDataInfo format_etc: "
++            << FormatFormatEtc(&format_etc) << ", medium: " << (medium ? 1 : 0);
+ }
+ 
+ DataObjectImpl::StoredDataInfo::~StoredDataInfo() {
+@@ -705,8 +812,13 @@ DataObjectImpl::DataObjectImpl()
+       in_drag_loop_(false),
+       in_async_mode_(false),
+       async_operation_started_(false),
+-      observer_(NULL) {
+-}
++      observer_(NULL),
++      download_finished_(false),
++      download_progress_window_(NULL),
++      download_progress_control_(NULL),
++      download_progress_font_(NULL),
++      download_file_provider_(0),
++      download_progress_(0) {}
+ 
+ DataObjectImpl::~DataObjectImpl() {
+   StopDownloads();
+@@ -725,6 +837,8 @@ void DataObjectImpl::StopDownloads() {
+ }
+ 
+ void DataObjectImpl::RemoveData(const FORMATETC& format) {
++  LOG(INFO) << "RemoveData in_drag_loop: " << in_drag_loop_
++            << " format_etc: " << FormatFormatEtc(&format);
+   if (format.ptd)
+     return;  // Don't attempt to compare target devices.
+ 
+@@ -741,6 +855,8 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
+ }
+ 
+ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
++  download_finished_ = true;
++#if 0
+   DataObjectImpl::StoredData::iterator iter = contents_.begin();
+   for (; iter != contents_.end(); ++iter) {
+     if ((*iter)->format_etc.cfFormat == CF_HDROP) {
+@@ -762,20 +878,202 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
+     }
+   }
+   DCHECK(iter != contents_.end());
++#endif
++}
++
++void DataObjectImpl::OnDownloadProgressed(int percent_complete) {
++  LOG(INFO) << "OnDownloadProgressed, percent_complete: " << percent_complete;
++  if (download_progress_control_)
++    SendMessage(download_progress_control_, PBM_SETPOS,
++                (WPARAM)percent_complete, 0);
++  download_progress_ = percent_complete;
++}
++
++void DataObjectImpl::OnDownloadAborted() {}
++
++BOOL OnCreate(HWND hwnd, LPCREATESTRUCT lpcs) {
++  DataObjectImpl* data_object =
++      reinterpret_cast<DataObjectImpl*>(lpcs->lpCreateParams);
++  SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LPARAM>(data_object));
++
++  data_object->download_progress_window_ = hwnd;
++  data_object->download_progress_control_ =
++      CreateWindowEx(0, PROGRESS_CLASS, (LPTSTR)NULL, WS_CHILD | WS_VISIBLE, 20,
++                     60, 686, 30, hwnd, (HMENU)0, CURRENT_MODULE(), NULL);
++  if (!data_object->download_progress_control_)
++    PLOG(ERROR) << "Failed to create download progress control";
++  else
++    SendMessage(data_object->download_progress_control_, PBM_SETPOS,
++                (WPARAM)data_object->download_progress_, 0);
++  HWND hwndButton =
++      CreateWindow(WC_BUTTON, L"Cancel",
++                   WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 563,
++                   128, 143, 48, hwnd, NULL, CURRENT_MODULE(), NULL);
++  if (!hwndButton)
++    PLOG(ERROR) << "Failed to create download progress cancel button";
++  else {
++    NONCLIENTMETRICS metrics = {sizeof(metrics)};
++    SystemParametersInfo(SPI_GETNONCLIENTMETRICS, metrics.cbSize, &metrics, 0);
++
++    data_object->download_progress_font_ =
++        CreateFontIndirect(&metrics.lfCaptionFont);
++
++    if (!data_object->download_progress_font_)
++      PLOG(ERROR) << "Failed to create download progress window front";
++    else
++      SendMessage(hwndButton, WM_SETFONT,
++                  (WPARAM)data_object->download_progress_font_,
++                  MAKELPARAM(TRUE, 0));
++  }
++
++  ShowWindow(hwnd, SW_SHOWNOACTIVATE);
++  return TRUE;
++}
++
++void OnDestroy(HWND hwnd) {
++  DataObjectImpl* data_object =
++      reinterpret_cast<DataObjectImpl*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
++  if (data_object->download_progress_font_)
++    DeleteObject(data_object->download_progress_font_);
++
++  PostQuitMessage(0);
+ }
+ 
+-void DataObjectImpl::OnDownloadAborted() {
++void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
++  DataObjectImpl* data_object =
++      reinterpret_cast<DataObjectImpl*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
++  if (codeNotify == BN_CLICKED) {
++    data_object->download_file_provider_->Stop();
++    if (!DestroyWindow(hwnd))
++      PLOG(ERROR) << "Failed to destroy download progress window";
++  }
++}
++
++LRESULT CALLBACK WindowProc(HWND hwnd,
++                            UINT uiMsg,
++                            WPARAM wParam,
++                            LPARAM lParam) {
++  switch (uiMsg) {
++    HANDLE_MSG(hwnd, WM_CREATE, OnCreate);
++    HANDLE_MSG(hwnd, WM_DESTROY, OnDestroy);
++    HANDLE_MSG(hwnd, WM_COMMAND, OnCommand);
++  }
++  return DefWindowProc(hwnd, uiMsg, wParam, lParam);
++}
++
++const wchar_t kDragDownloadingWindowClassName[] = L"Front_DragDownloadWindow";
++
++class DragDownloadWindowClass {
++ public:
++  DragDownloadWindowClass();
++  ~DragDownloadWindowClass();
++
++  ATOM atom() { return atom_; }
++  HINSTANCE instance() { return instance_; }
++
++ private:
++  ATOM atom_;
++  HINSTANCE instance_;
++
++  DISALLOW_COPY_AND_ASSIGN(DragDownloadWindowClass);
++};
++
++static base::LazyInstance<DragDownloadWindowClass>::DestructorAtExit
++    g_window_class = LAZY_INSTANCE_INITIALIZER;
++
++DragDownloadWindowClass::DragDownloadWindowClass()
++    : atom_(0), instance_(CURRENT_MODULE()) {
++  WNDCLASSEX window_class;
++  window_class.cbSize = sizeof(window_class);
++  window_class.style = 0;
++  window_class.lpfnWndProc = &base::win::WrappedWindowProc<WindowProc>;
++  window_class.cbClsExtra = 0;
++  window_class.cbWndExtra = 0;
++  window_class.hInstance = instance_;
++  window_class.hIcon = NULL;
++  window_class.hCursor = NULL;
++  window_class.hbrBackground = NULL;
++  window_class.lpszMenuName = NULL;
++  window_class.lpszClassName = kDragDownloadingWindowClassName;
++  window_class.hIconSm = NULL;
++  atom_ = RegisterClassEx(&window_class);
++  if (atom_ == 0) {
++    PLOG(ERROR) << "Failed to register the window class for the download "
++                   "progress window";
++  }
++}
++
++DragDownloadWindowClass::~DragDownloadWindowClass() {
++  if (atom_ != 0) {
++    BOOL result = UnregisterClass(MAKEINTATOM(atom_), instance_);
++    // Hitting this DCHECK means that some download progress windows objects
++    // were leaked.
++    DCHECK(result);
++  }
++}
++
++#pragma comment(lib, "Comctl32.lib")
++
++DWORD WINAPI DownloadThread(LPVOID data_object) {
++  LOG(INFO) << "DownloadThread";
++
++  POINT point{};
++  GetCursorPos(&point);
++
++  DragDownloadWindowClass& window_class = g_window_class.Get();
++
++  if (!CreateWindowEx(WS_EX_TOPMOST, MAKEINTATOM(window_class.atom()),
++                      TEXT("Downloading..."), WS_POPUP | WS_CAPTION, point.x,
++                      point.y, 732, 245, GetDesktopWindow(), NULL,
++                      CURRENT_MODULE(), data_object)) {
++    PLOG(ERROR) << "Failed to create download progress window";
++    return 0;
++  }
++
++  MSG msg;
++  while (GetMessage(&msg, NULL, 0, 0)) {
++    TranslateMessage(&msg);
++    DispatchMessage(&msg);
++  }
++
++  return 0;
+ }
+ 
+ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
++  LOG(INFO) << "GetData in_drag_loop: " << in_drag_loop_
++            << ", format_etc: " << FormatFormatEtc(format_etc)
++            << ", is_aborting_: " << is_aborting_;
+   if (is_aborting_)
+     return DV_E_FORMATETC;
+ 
+   StoredData::iterator iter = contents_.begin();
+   while (iter != contents_.end()) {
+     if ((*iter)->format_etc.cfFormat == format_etc->cfFormat &&
+-        (*iter)->format_etc.lindex == format_etc->lindex &&
++        //(*iter)->format_etc.lindex == format_etc->lindex &&
+         ((*iter)->format_etc.tymed & format_etc->tymed)) {
++      if (download_file_provider_ && (*iter)->format_etc.cfFormat == CF_HDROP &&
++          !in_drag_loop_ && !download_finished_ && !is_aborting_) {
++        HANDLE thread = CreateThread(NULL, 0, &DownloadThread, this, 0, NULL);
++        if (!thread)
++          PLOG(ERROR) << "Failed to create download progress thread";
++        else
++          CloseHandle(thread);
++
++        LOG(INFO) << "Waiting for download";
++        if (!download_file_provider_->Wait()) {
++          LOG(INFO) << "Wait failed, DV_E_FORMATETC";
++          if (download_progress_window_)
++            PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
++          is_aborting_ = true;
++          return DV_E_FORMATETC;
++        }
++
++        LOG(INFO) << "Wait finished";
++        if (download_progress_window_)
++          PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
++        download_finished_ = true;
++      }
++
+       // If medium is NULL, delay-rendering will be used.
+       if ((*iter)->medium) {
+         DuplicateMedium((*iter)->format_etc.cfFormat, (*iter)->medium, medium);
+@@ -820,21 +1118,26 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
+     ++iter;
+   }
+ 
++  LOG(INFO) << "GetData no matching format, DV_E_FORMATETC";
+   return DV_E_FORMATETC;
+ }
+ 
+ HRESULT DataObjectImpl::GetDataHere(FORMATETC* format_etc,
+                                     STGMEDIUM* medium) {
++  LOG(INFO) << "GetDataHere";
+   return DATA_E_FORMATETC;
+ }
+ 
+ HRESULT DataObjectImpl::QueryGetData(FORMATETC* format_etc) {
++  LOG(INFO) << "QueryGetData in_drag_loop: " << in_drag_loop_
++            << " format_etc: " << FormatFormatEtc(format_etc);
+   StoredData::const_iterator iter = contents_.begin();
+   while (iter != contents_.end()) {
+     if ((*iter)->format_etc.cfFormat == format_etc->cfFormat)
+       return S_OK;
+     ++iter;
+   }
++  LOG(INFO) << "QueryGetData DV_E_FORMATETC";
+   return DV_E_FORMATETC;
+ }
+ 
+@@ -846,6 +1149,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
+ 
+ HRESULT DataObjectImpl::SetData(
+     FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
++  LOG(INFO) << "SetData in_drag_loop: " << in_drag_loop_
++            << " format_etc: " << FormatFormatEtc(format_etc);
+   RemoveData(*format_etc);
+ 
+   STGMEDIUM* local_medium = new STGMEDIUM;
+@@ -897,26 +1202,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
+ 
+ HRESULT DataObjectImpl::EndOperation(
+     HRESULT result, IBindCtx* reserved, DWORD effects) {
++  LOG(INFO) << "EndOperation";
+   async_operation_started_ = false;
+   return S_OK;
+ }
+ 
+ HRESULT DataObjectImpl::GetAsyncMode(BOOL* is_op_async) {
++  LOG(INFO) << "GetAsyncMode";
+   *is_op_async = in_async_mode_ ? VARIANT_TRUE : VARIANT_FALSE;
+   return S_OK;
+ }
+ 
+ HRESULT DataObjectImpl::InOperation(BOOL* in_async_op) {
++  LOG(INFO) << "InOperation";
+   *in_async_op = async_operation_started_ ? VARIANT_TRUE : VARIANT_FALSE;
+   return S_OK;
+ }
+ 
+ HRESULT DataObjectImpl::SetAsyncMode(BOOL do_op_async) {
++  LOG(INFO) << "SetAsyncMode";
+   in_async_mode_ = !!do_op_async;
+   return S_OK;
+ }
+ 
+ HRESULT DataObjectImpl::StartOperation(IBindCtx* reserved) {
++  LOG(INFO) << "StartOperation";
+   async_operation_started_ = true;
+   return S_OK;
+ }
+@@ -928,11 +1238,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
+   if (!object)
+     return E_POINTER;
+   if (IsEqualIID(iid, IID_IDataObject) || IsEqualIID(iid, IID_IUnknown)) {
++    LOG(INFO) << "QueryInterface IID_IDataObject";
+     *object = static_cast<IDataObject*>(this);
+   } else if (in_async_mode_ &&
+              IsEqualIID(iid, __uuidof(IDataObjectAsyncCapability))) {
++    LOG(INFO) << "QueryInterface IDataObjectAsyncCapability";
+     *object = static_cast<IDataObjectAsyncCapability*>(this);
+   } else {
++    OLECHAR* guidString;
++    StringFromCLSID(iid, &guidString);
++    LOG(INFO) << "QueryInterface " << guidString;
++    ::CoTaskMemFree(guidString);
+     *object = NULL;
+     return E_NOINTERFACE;
+   }
+diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.h b/ui/base/dragdrop/os_exchange_data_provider_win.h
+index 96fa77ec7633..616f21187b80 100644
+--- a/ui/base/dragdrop/os_exchange_data_provider_win.h
++++ b/ui/base/dragdrop/os_exchange_data_provider_win.h
+@@ -53,6 +53,7 @@ class DataObjectImpl : public DownloadFileObserver,
+ 
+   // DownloadFileObserver implementation:
+   void OnDownloadCompleted(const base::FilePath& file_path) override;
++  void OnDownloadProgressed(int percent_complete) override;
+   void OnDownloadAborted() override;
+ 
+   // IDataObject implementation:
+@@ -121,6 +122,17 @@ class DataObjectImpl : public DownloadFileObserver,
+   bool in_async_mode_;
+   bool async_operation_started_;
+   Observer* observer_;
++  
++  bool download_finished_;
++  HWND download_progress_window_;
++  HWND download_progress_control_;
++  HFONT download_progress_font_;
++  DownloadFileProvider* download_file_provider_;
++  int download_progress_;
++
++  friend BOOL OnCreate(HWND hwnd, LPCREATESTRUCT lpcs);
++  friend void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify);
++  friend void OnDestroy(HWND hwnd);
+ };
+ 
+ class UI_BASE_EXPORT OSExchangeDataProviderWin
+diff --git a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
+index 2800896f01fc..37e4e2dae09b 100644
+--- a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
++++ b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_win.h"
+ 
++#include "base/logging.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "ui/base/dragdrop/drag_drop_types.h"
+ #include "ui/base/dragdrop/drag_source_win.h"
+@@ -52,9 +53,11 @@ int DesktopDragDropClientWin::StartDragAndDrop(
+   UMA_HISTOGRAM_ENUMERATION("Event.DragDrop.Start", source,
+                             ui::DragDropTypes::DRAG_EVENT_SOURCE_COUNT);
+ 
++  LOG(INFO) << "StartDragAndDrop operation: " << operation;
+   HRESULT result = DoDragDrop(
+       ui::OSExchangeDataProviderWin::GetIDataObject(data), drag_source_.Get(),
+       ui::DragDropTypes::DragOperationToDropEffect(operation), &effect);
++  LOG(INFO) << "StartDragAndDrop result: " << result << ", effect: " << effect;
+   drag_source_copy->set_data(nullptr);
+ 
+   if (alive)
+-- 
+2.20.1.windows.1
+
