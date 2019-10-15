@@ -1,4 +1,4 @@
-From 7769a2ee935ffa1d6d5bc812d4abc0f3c2d48baf Mon Sep 17 00:00:00 2001
+From ed4ffc40d45b1477ed357c5c7ca7047c06fe7fec Mon Sep 17 00:00:00 2001
 From: Jeremy Spiegel <jeremy.spiegel@frontapp.com>
 Date: Wed, 2 Oct 2019 11:08:13 -0700
 Subject: [PATCH] Make CF_HDROP always available for virtual file
@@ -6,12 +6,14 @@ Subject: [PATCH] Make CF_HDROP always available for virtual file
 ---
  .../browser/download/drag_download_file.cc    |  20 +-
  content/browser/download/drag_download_file.h |   1 +
+ .../browser/download/drag_download_util.cc    |   3 +
+ content/browser/download/drag_download_util.h |   1 +
  .../web_contents/web_contents_view_aura.cc    |   2 +-
  ui/base/dragdrop/download_file_interface.h    |   1 +
  .../dragdrop/os_exchange_data_provider_win.cc | 328 +++++++++++++++++-
  .../dragdrop/os_exchange_data_provider_win.h  |  12 +
  .../desktop_drag_drop_client_win.cc           |   3 +
- 7 files changed, 358 insertions(+), 9 deletions(-)
+ 9 files changed, 362 insertions(+), 9 deletions(-)
 
 diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
 index c15e78c9ef1d..4b12d10e2413 100644
@@ -94,6 +96,32 @@ index 635a9092c7bd..5ce775223e6a 100644
    void CheckThread();
  
    base::FilePath file_path_;
+diff --git a/content/browser/download/drag_download_util.cc b/content/browser/download/drag_download_util.cc
+index a91ec48853c6..6dd8ddca02ee 100644
+--- a/content/browser/download/drag_download_util.cc
++++ b/content/browser/download/drag_download_util.cc
+@@ -103,6 +103,9 @@ void PromiseFileFinalizer::OnDownloadCompleted(
+       base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
+ }
+ 
++void PromiseFileFinalizer::OnDownloadProgressed(int percent_complete) {
++}
++
+ void PromiseFileFinalizer::OnDownloadAborted() {
+   base::PostTaskWithTraits(
+       FROM_HERE, {BrowserThread::UI},
+diff --git a/content/browser/download/drag_download_util.h b/content/browser/download/drag_download_util.h
+index 343ef798fba6..86d3749e9cbd 100644
+--- a/content/browser/download/drag_download_util.h
++++ b/content/browser/download/drag_download_util.h
+@@ -46,6 +46,7 @@ class PromiseFileFinalizer : public ui::DownloadFileObserver {
+ 
+   // DownloadFileObserver methods.
+   void OnDownloadCompleted(const base::FilePath& file_path) override;
++  void OnDownloadProgressed(int percent_complete) override;
+   void OnDownloadAborted() override;
+ 
+  protected:
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
 index 3b06cee64b44..11621d990358 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
@@ -705,5 +733,5 @@ index 2800896f01fc..37e4e2dae09b 100644
  
    if (alive)
 -- 
-2.20.1.windows.1
+2.20.1 (Apple Git-117)
 
