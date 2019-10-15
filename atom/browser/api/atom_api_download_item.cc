@@ -132,7 +132,7 @@ bool DownloadItem::HasUserGesture() const {
 
 std::string DownloadItem::GetFilename() const {
   return base::UTF16ToUTF8(
-      net::GenerateFileName(GetURL(), GetContentDisposition(), std::string(),
+      net::GenerateFileName(GetURL(), GetContentDisposition(), "ISO-8859-1",
                             download_item_->GetSuggestedFilename(),
                             GetMimeType(), "download")
           .LossyDisplayName());
