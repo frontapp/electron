@@ -109,7 +109,7 @@ class FileSelectHelper : public base::RefCounted<FileSelectHelper>,
       listener_.reset();
     }
     render_frame_host_ = nullptr;
-    Release();
+    // Release();
   }
 
   // content::WebContentsObserver:
