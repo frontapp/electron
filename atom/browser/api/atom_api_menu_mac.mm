@@ -54,6 +54,8 @@ void MenuMac::PopupOnUI(const base::WeakPtr<NativeWindow>& native_window,
                         int y,
                         int positioning_item,
                         base::Closure callback) {
+  v8::HandleScope handle_scope(isolate());
+  GetWrapper();
   if (!native_window)
     return;
   NSWindow* nswindow = native_window->GetNativeWindow().GetNativeNSWindow();
