@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "atom/browser/api/atom_api_browser_view.h"
 #include "atom/browser/browser.h"
 #include "atom/browser/unresponsive_suppressor.h"
 #include "atom/browser/web_contents_preferences.h"
@@ -277,10 +278,11 @@ void BrowserWindow::OnWindowFocus() {
 }
 
 void BrowserWindow::OnWindowResize() {
-#if defined(OS_MACOSX)
+  LOG(INFO) << "BrowserWindow::OnWindowResize";
+  // #if defined(OS_MACOSX)
   if (!draggable_regions_.empty())
     UpdateDraggableRegions(nullptr, draggable_regions_);
-#endif
+  // #endif
   TopLevelWindow::OnWindowResize();
 }
 
@@ -322,10 +324,19 @@ void BrowserWindow::SetBrowserView(v8::Local<v8::Value> value) {
 }
 
 void BrowserWindow::AddBrowserView(v8::Local<v8::Value> value) {
+  LOG(INFO) << "BrowserWindow::AddBrowserView 1";
   TopLevelWindow::AddBrowserView(value);
-#if defined(OS_MACOSX)
+  mate::Handle<BrowserView> browser_view;
+  if (value->IsObject() &&
+      mate::ConvertFromV8(isolate(), value, &browser_view)) {
+    LOG(INFO) << "BrowserWindow::AddBrowserView 2: "
+                 "browser_view->draggable_regions().size(): "
+              << browser_view->draggable_regions().size();
+    draggable_regions_ = browser_view->draggable_regions();
+  }
+  // #if defined(OS_MACOSX)
   UpdateDraggableRegions(nullptr, draggable_regions_);
-#endif
+  // #endif
 }
 
 void BrowserWindow::RemoveBrowserView(v8::Local<v8::Value> value) {
@@ -357,6 +368,18 @@ void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
   }
 
   TopLevelWindow::SetVibrancy(isolate, value);
+}
+
+void BrowserWindow::OnWindowMaximize() {
+  LOG(INFO) << "BrowserWindow::OnWindowMaximize";
+  TopLevelWindow::OnWindowMaximize();
+  UpdateDraggableRegions(nullptr, draggable_regions_);
+}
+
+void BrowserWindow::OnWindowUnmaximize() {
+  LOG(INFO) << "BrowserWindow::OnWindowUnmaximize";
+  TopLevelWindow::OnWindowUnmaximize();
+  UpdateDraggableRegions(nullptr, draggable_regions_);
 }
 
 void BrowserWindow::FocusOnWebView() {

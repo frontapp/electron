@@ -116,16 +116,29 @@ void AtomRenderFrameObserver::DidCreateScriptContext(
 }
 
 void AtomRenderFrameObserver::DraggableRegionsChanged() {
+  LOG(INFO) << "AtomRenderFrameObserver::DraggableRegionsChanged";
   blink::WebVector<blink::WebDraggableRegion> webregions =
       render_frame_->GetWebFrame()->GetDocument().DraggableRegions();
   std::vector<DraggableRegion> regions;
   for (auto& webregion : webregions) {
+    LOG(INFO) << "webregion: x: " << webregion.bounds.x
+              << " y: " << webregion.bounds.y
+              << " width: " << webregion.bounds.width
+              << " height: " << webregion.bounds.height
+              << " draggable: " << webregion.draggable;
     DraggableRegion region;
     render_frame_->GetRenderView()->ConvertViewportToWindowViaWidget(
         &webregion.bounds);
     region.bounds = webregion.bounds;
     region.draggable = webregion.draggable;
     regions.push_back(region);
+  }
+  for (const DraggableRegion& region : regions) {
+    LOG(INFO) << "region: x: " << region.bounds.x()
+              << " y: " << region.bounds.y()
+              << " right: " << region.bounds.right()
+              << " bottom: " << region.bounds.bottom()
+              << " draggable: " << region.draggable;
   }
   Send(new AtomFrameHostMsg_UpdateDraggableRegions(routing_id(), regions));
 }

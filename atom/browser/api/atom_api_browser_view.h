@@ -40,6 +40,9 @@ class BrowserView : public mate::TrackableObject<BrowserView>,
 
   WebContents* web_contents() const { return api_web_contents_; }
   NativeBrowserView* view() const { return view_.get(); }
+  const std::vector<DraggableRegion>& draggable_regions() const {
+    return draggable_regions_;
+  }
 
   int32_t ID() const;
 
@@ -51,6 +54,8 @@ class BrowserView : public mate::TrackableObject<BrowserView>,
 
   // content::WebContentsObserver:
   void WebContentsDestroyed() override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* rfh) override;
 
  private:
   void Init(v8::Isolate* isolate,
@@ -61,12 +66,17 @@ class BrowserView : public mate::TrackableObject<BrowserView>,
   void SetBounds(const gfx::Rect& bounds);
   void SetBackgroundColor(const std::string& color_name);
 
+  void UpdateDraggableRegions(content::RenderFrameHost* rfh,
+                              const std::vector<DraggableRegion>& regions);
+
   v8::Local<v8::Value> GetWebContents();
 
   v8::Global<v8::Value> web_contents_;
   class WebContents* api_web_contents_ = nullptr;
 
   std::unique_ptr<NativeBrowserView> view_;
+
+  std::vector<DraggableRegion> draggable_regions_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserView);
 };

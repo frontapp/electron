@@ -76,6 +76,8 @@ class BrowserWindow : public TopLevelWindow,
   void RemoveBrowserView(v8::Local<v8::Value> value) override;
   void ResetBrowserViews() override;
   void SetVibrancy(v8::Isolate* isolate, v8::Local<v8::Value> value) override;
+  void OnWindowMaximize() override;
+  void OnWindowUnmaximize() override;
 
   // BrowserWindow APIs.
   void FocusOnWebView();
@@ -111,9 +113,9 @@ class BrowserWindow : public TopLevelWindow,
   // it should be cancelled when we can prove that the window is responsive.
   base::CancelableClosure window_unresponsive_closure_;
 
-#if defined(OS_MACOSX)
+  // #if defined(OS_MACOSX)
   std::vector<DraggableRegion> draggable_regions_;
-#endif
+  // #endif
 
   v8::Global<v8::Value> web_contents_;
   base::WeakPtr<api::WebContents> api_web_contents_;

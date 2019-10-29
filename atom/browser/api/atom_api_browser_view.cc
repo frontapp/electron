@@ -7,6 +7,7 @@
 #include "atom/browser/api/atom_api_web_contents.h"
 #include "atom/browser/browser.h"
 #include "atom/browser/native_browser_view.h"
+#include "atom/common/api/api_messages.h"
 #include "atom/common/color_util.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
 #include "atom/common/native_mate_converters/value_converter.h"
@@ -85,6 +86,24 @@ BrowserView::~BrowserView() {
 void BrowserView::WebContentsDestroyed() {
   api_web_contents_ = nullptr;
   web_contents_.Reset();
+}
+
+bool BrowserView::OnMessageReceived(const IPC::Message& message,
+                                    content::RenderFrameHost* rfh) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(BrowserView, message, rfh)
+    IPC_MESSAGE_HANDLER(AtomFrameHostMsg_UpdateDraggableRegions,
+                        UpdateDraggableRegions)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  return handled;
+}
+
+void BrowserView::UpdateDraggableRegions(
+    content::RenderFrameHost* rfh,
+    const std::vector<DraggableRegion>& regions) {
+  LOG(INFO) << "BrowserView::UpdateDraggableRegions";
+  draggable_regions_ = regions;
 }
 
 // static
