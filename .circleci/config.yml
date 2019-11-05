@@ -777,7 +777,7 @@ chromium-upgrade-branches: &chromium-upgrade-branches
   /chromium\-upgrade\/[0-9]+/
 
 # List of all jobs.
-version: 2
+version: 2.1
 jobs:
   # Layer 1: Checkout.
   linux-checkout:
