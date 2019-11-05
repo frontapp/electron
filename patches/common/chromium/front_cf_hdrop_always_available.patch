@@ -1,4 +1,4 @@
-From ed4ffc40d45b1477ed357c5c7ca7047c06fe7fec Mon Sep 17 00:00:00 2001
+From 6a80c7a708556b0ca0cc2461790c0e4daa5af13b Mon Sep 17 00:00:00 2001
 From: Jeremy Spiegel <jeremy.spiegel@frontapp.com>
 Date: Wed, 2 Oct 2019 11:08:13 -0700
 Subject: [PATCH] Make CF_HDROP always available for virtual file
@@ -10,10 +10,11 @@ Subject: [PATCH] Make CF_HDROP always available for virtual file
  content/browser/download/drag_download_util.h |   1 +
  .../web_contents/web_contents_view_aura.cc    |   2 +-
  ui/base/dragdrop/download_file_interface.h    |   1 +
- .../dragdrop/os_exchange_data_provider_win.cc | 328 +++++++++++++++++-
+ ui/base/dragdrop/drag_source_win.cc           |   1 +
+ .../dragdrop/os_exchange_data_provider_win.cc | 336 +++++++++++++++++-
  .../dragdrop/os_exchange_data_provider_win.h  |  12 +
  .../desktop_drag_drop_client_win.cc           |   3 +
- 9 files changed, 362 insertions(+), 9 deletions(-)
+ 10 files changed, 371 insertions(+), 9 deletions(-)
 
 diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
 index c15e78c9ef1d..4b12d10e2413 100644
@@ -147,8 +148,20 @@ index db82ff2d2c60..e1264d21a18b 100644
    virtual void OnDownloadAborted() = 0;
  
   protected:
+diff --git a/ui/base/dragdrop/drag_source_win.cc b/ui/base/dragdrop/drag_source_win.cc
+index a797a721a773..e22e9908cb5e 100644
+--- a/ui/base/dragdrop/drag_source_win.cc
++++ b/ui/base/dragdrop/drag_source_win.cc
+@@ -38,6 +38,7 @@ HRESULT DragSourceWin::GiveFeedback(DWORD effect) {
+ }
+ 
+ void DragSourceWin::OnDragSourceDrop() {
++  LOG(INFO) << "DragSourceWin::OnDragSourceDrop";
+   DCHECK(data_);
+   ui::OSExchangeDataProviderWin::GetDataObjectImpl(*data_)
+       ->set_in_drag_loop(false);
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
-index db7425bbf14d..b2eb83eaa410 100644
+index db7425bbf14d..fc7a5d704795 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
 @@ -7,22 +7,28 @@
@@ -218,15 +231,18 @@ index db7425bbf14d..b2eb83eaa410 100644
    std::vector<base::string16> filenames;
    bool success = ClipboardUtil::GetFilenames(source_object_.Get(), &filenames);
    if (success)
-@@ -447,6 +460,7 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
+@@ -447,6 +460,10 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
  
  bool OSExchangeDataProviderWin::GetFilenames(
      std::vector<FileInfo>* filenames) const {
 +  LOG(INFO) << "GetFilenames";
++  if (!HasCustomFormat(ClipboardFormatType::GetType("CF_FrontInDragLoop")))
++    return false;
++
    std::vector<base::string16> filenames_local;
    bool success =
        ClipboardUtil::GetFilenames(source_object_.Get(), &filenames_local);
-@@ -530,13 +544,19 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
+@@ -530,13 +547,19 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
  
  void OSExchangeDataProviderWin::SetDownloadFileInfo(
      const OSExchangeData::DownloadFileInfo& download) {
@@ -247,7 +263,7 @@ index db7425bbf14d..b2eb83eaa410 100644
  
    // Add CF_HDROP.
    auto info = std::make_unique<DataObjectImpl::StoredDataInfo>(
-@@ -545,7 +565,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
+@@ -545,7 +568,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
    data_->contents_.push_back(std::move(info));
  
    // Adding a download file always enables async mode.
@@ -256,7 +272,7 @@ index db7425bbf14d..b2eb83eaa410 100644
  }
  
  void OSExchangeDataProviderWin::SetDragImage(
-@@ -686,9 +706,96 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
+@@ -686,9 +709,96 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
      destination->pUnkForRelease->AddRef();
  }
  
@@ -353,7 +369,7 @@ index db7425bbf14d..b2eb83eaa410 100644
  }
  
  DataObjectImpl::StoredDataInfo::~StoredDataInfo() {
-@@ -705,8 +812,13 @@ DataObjectImpl::DataObjectImpl()
+@@ -705,8 +815,13 @@ DataObjectImpl::DataObjectImpl()
        in_drag_loop_(false),
        in_async_mode_(false),
        async_operation_started_(false),
@@ -369,7 +385,7 @@ index db7425bbf14d..b2eb83eaa410 100644
  
  DataObjectImpl::~DataObjectImpl() {
    StopDownloads();
-@@ -725,6 +837,8 @@ void DataObjectImpl::StopDownloads() {
+@@ -725,6 +840,8 @@ void DataObjectImpl::StopDownloads() {
  }
  
  void DataObjectImpl::RemoveData(const FORMATETC& format) {
@@ -378,7 +394,7 @@ index db7425bbf14d..b2eb83eaa410 100644
    if (format.ptd)
      return;  // Don't attempt to compare target devices.
  
-@@ -741,6 +855,8 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
+@@ -741,6 +858,8 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
  }
  
  void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
@@ -387,7 +403,7 @@ index db7425bbf14d..b2eb83eaa410 100644
    DataObjectImpl::StoredData::iterator iter = contents_.begin();
    for (; iter != contents_.end(); ++iter) {
      if ((*iter)->format_etc.cfFormat == CF_HDROP) {
-@@ -762,20 +878,202 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
+@@ -762,20 +881,204 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
      }
    }
    DCHECK(iter != contents_.end());
@@ -450,9 +466,8 @@ index db7425bbf14d..b2eb83eaa410 100644
 +    DeleteObject(data_object->download_progress_font_);
 +
 +  PostQuitMessage(0);
- }
- 
--void DataObjectImpl::OnDownloadAborted() {
++}
++
 +void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
 +  DataObjectImpl* data_object =
 +      reinterpret_cast<DataObjectImpl*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
@@ -461,8 +476,9 @@ index db7425bbf14d..b2eb83eaa410 100644
 +    if (!DestroyWindow(hwnd))
 +      PLOG(ERROR) << "Failed to destroy download progress window";
 +  }
-+}
-+
+ }
+ 
+-void DataObjectImpl::OnDownloadAborted() {
 +LRESULT CALLBACK WindowProc(HWND hwnd,
 +                            UINT uiMsg,
 +                            WPARAM wParam,
@@ -586,13 +602,15 @@ index db7425bbf14d..b2eb83eaa410 100644
 +        LOG(INFO) << "Wait finished";
 +        if (download_progress_window_)
 +          PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
++
 +        download_finished_ = true;
++        return GetData(format_etc, medium);
 +      }
 +
        // If medium is NULL, delay-rendering will be used.
        if ((*iter)->medium) {
          DuplicateMedium((*iter)->format_etc.cfFormat, (*iter)->medium, medium);
-@@ -820,21 +1118,26 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
+@@ -820,21 +1123,29 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
      ++iter;
    }
  
@@ -609,6 +627,9 @@ index db7425bbf14d..b2eb83eaa410 100644
  HRESULT DataObjectImpl::QueryGetData(FORMATETC* format_etc) {
 +  LOG(INFO) << "QueryGetData in_drag_loop: " << in_drag_loop_
 +            << " format_etc: " << FormatFormatEtc(format_etc);
++  if (format_etc->cfFormat == ClipboardFormatType::GetType("CF_FrontInDragLoop").ToFormatEtc().cfFormat)
++    return in_drag_loop_ ? S_OK : DV_E_FORMATETC;
++
    StoredData::const_iterator iter = contents_.begin();
    while (iter != contents_.end()) {
      if ((*iter)->format_etc.cfFormat == format_etc->cfFormat)
@@ -619,7 +640,7 @@ index db7425bbf14d..b2eb83eaa410 100644
    return DV_E_FORMATETC;
  }
  
-@@ -846,6 +1149,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
+@@ -846,6 +1157,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
  
  HRESULT DataObjectImpl::SetData(
      FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
@@ -628,7 +649,7 @@ index db7425bbf14d..b2eb83eaa410 100644
    RemoveData(*format_etc);
  
    STGMEDIUM* local_medium = new STGMEDIUM;
-@@ -897,26 +1202,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
+@@ -897,26 +1210,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
  
  HRESULT DataObjectImpl::EndOperation(
      HRESULT result, IBindCtx* reserved, DWORD effects) {
@@ -660,7 +681,7 @@ index db7425bbf14d..b2eb83eaa410 100644
    async_operation_started_ = true;
    return S_OK;
  }
-@@ -928,11 +1238,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
+@@ -928,11 +1246,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
    if (!object)
      return E_POINTER;
    if (IsEqualIID(iid, IID_IDataObject) || IsEqualIID(iid, IID_IUnknown)) {
@@ -733,5 +754,5 @@ index 2800896f01fc..37e4e2dae09b 100644
  
    if (alive)
 -- 
-2.20.1 (Apple Git-117)
+2.23.0.windows.1
 
