@@ -106,6 +106,9 @@ void BrowserView::UpdateDraggableRegions(
     const std::vector<DraggableRegion>& regions) {
   LOG(INFO) << "BrowserView::UpdateDraggableRegions";
   draggable_regions_ = regions;
+  if (!api_web_contents_)
+    return;
+
   auto v8_browser_window = api_web_contents_->GetOwnerBrowserWindow();
   mate::Handle<BrowserWindow> browser_window;
   if (v8_browser_window->IsObject() &&
