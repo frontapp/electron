@@ -56,6 +56,8 @@ class BrowserView : public mate::TrackableObject<BrowserView>,
   void WebContentsDestroyed() override;
   bool OnMessageReceived(const IPC::Message& message,
                          content::RenderFrameHost* rfh) override;
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
  private:
   void Init(v8::Isolate* isolate,

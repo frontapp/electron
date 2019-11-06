@@ -4,6 +4,7 @@
 
 #include "atom/browser/api/atom_api_browser_view.h"
 
+#include "atom/browser/api/atom_api_browser_window.h"
 #include "atom/browser/api/atom_api_web_contents.h"
 #include "atom/browser/browser.h"
 #include "atom/browser/native_browser_view.h"
@@ -13,6 +14,7 @@
 #include "atom/common/native_mate_converters/value_converter.h"
 #include "atom/common/node_includes.h"
 #include "atom/common/options_switches.h"
+#include "content/public/browser/navigation_handle.h"
 #include "native_mate/constructor.h"
 #include "native_mate/dictionary.h"
 #include "ui/gfx/geometry/rect.h"
@@ -104,6 +106,20 @@ void BrowserView::UpdateDraggableRegions(
     const std::vector<DraggableRegion>& regions) {
   LOG(INFO) << "BrowserView::UpdateDraggableRegions";
   draggable_regions_ = regions;
+  auto v8_browser_window = api_web_contents_->GetOwnerBrowserWindow();
+  mate::Handle<BrowserWindow> browser_window;
+  if (v8_browser_window->IsObject() &&
+      mate::ConvertFromV8(isolate(), v8_browser_window, &browser_window)) {
+    browser_window->UpdateDraggableRegions(
+        nullptr, browser_window->GetDraggableRegions());
+  }
+}
+
+void BrowserView::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (navigation_handle->IsInMainFrame() &&
+      !navigation_handle->IsSameDocument())
+    draggable_regions_.clear();
 }
 
 // static

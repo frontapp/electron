@@ -95,6 +95,9 @@ class BrowserWindow : public TopLevelWindow,
   // Called when the window needs to update its draggable region.
   void UpdateDraggableRegions(content::RenderFrameHost* rfh,
                               const std::vector<DraggableRegion>& regions);
+  void HandleUpdateDraggableRegions(
+      content::RenderFrameHost* rfh,
+      const std::vector<DraggableRegion>& regions);
 
   // Convert draggable regions in raw format to SkRegion format.
   std::unique_ptr<SkRegion> DraggableRegionsToSkRegion(
@@ -123,6 +126,9 @@ class BrowserWindow : public TopLevelWindow,
   base::WeakPtrFactory<BrowserWindow> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserWindow);
+
+  std::vector<DraggableRegion> GetDraggableRegions() const;
+  friend class BrowserView;
 };
 
 }  // namespace api

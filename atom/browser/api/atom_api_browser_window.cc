@@ -179,10 +179,18 @@ bool BrowserWindow::OnMessageReceived(const IPC::Message& message,
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(BrowserWindow, message, rfh)
     IPC_MESSAGE_HANDLER(AtomFrameHostMsg_UpdateDraggableRegions,
-                        UpdateDraggableRegions)
+                        HandleUpdateDraggableRegions)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
+}
+
+void BrowserWindow::HandleUpdateDraggableRegions(
+    content::RenderFrameHost* rfh,
+    const std::vector<DraggableRegion>& regions) {
+  LOG(INFO) << "HandleUpdateDraggableRegions";
+  draggable_regions_ = regions;
+  UpdateDraggableRegions(rfh, GetDraggableRegions());
 }
 
 void BrowserWindow::OnCloseContents() {
@@ -280,8 +288,8 @@ void BrowserWindow::OnWindowFocus() {
 void BrowserWindow::OnWindowResize() {
   LOG(INFO) << "BrowserWindow::OnWindowResize";
   // #if defined(OS_MACOSX)
-  if (!draggable_regions_.empty())
-    UpdateDraggableRegions(nullptr, draggable_regions_);
+  // if (!draggable_regions_.empty())
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
   // #endif
   TopLevelWindow::OnWindowResize();
 }
@@ -316,41 +324,36 @@ void BrowserWindow::SetBackgroundColor(const std::string& color_name) {
 }
 
 void BrowserWindow::SetBrowserView(v8::Local<v8::Value> value) {
+  LOG(INFO) << "BrowserWindow::SetBrowserView";
   TopLevelWindow::ResetBrowserViews();
   TopLevelWindow::AddBrowserView(value);
-#if defined(OS_MACOSX)
-  UpdateDraggableRegions(nullptr, draggable_regions_);
-#endif
+  // #if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
+  // #endif
 }
 
 void BrowserWindow::AddBrowserView(v8::Local<v8::Value> value) {
-  LOG(INFO) << "BrowserWindow::AddBrowserView 1";
+  LOG(INFO) << "BrowserWindow::AddBrowserView";
   TopLevelWindow::AddBrowserView(value);
-  mate::Handle<BrowserView> browser_view;
-  if (value->IsObject() &&
-      mate::ConvertFromV8(isolate(), value, &browser_view)) {
-    LOG(INFO) << "BrowserWindow::AddBrowserView 2: "
-                 "browser_view->draggable_regions().size(): "
-              << browser_view->draggable_regions().size();
-    draggable_regions_ = browser_view->draggable_regions();
-  }
   // #if defined(OS_MACOSX)
-  UpdateDraggableRegions(nullptr, draggable_regions_);
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
   // #endif
 }
 
 void BrowserWindow::RemoveBrowserView(v8::Local<v8::Value> value) {
+  LOG(INFO) << "BrowserWindow::RemoveBrowserView";
   TopLevelWindow::RemoveBrowserView(value);
-#if defined(OS_MACOSX)
-  UpdateDraggableRegions(nullptr, draggable_regions_);
-#endif
+  // #if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
+  // #endif
 }
 
 void BrowserWindow::ResetBrowserViews() {
+  LOG(INFO) << "BrowserWindow::ResetBrowserView";
   TopLevelWindow::ResetBrowserViews();
-#if defined(OS_MACOSX)
-  UpdateDraggableRegions(nullptr, draggable_regions_);
-#endif
+  // #if defined(OS_MACOSX)
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
+  // #endif
 }
 
 void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
@@ -373,13 +376,13 @@ void BrowserWindow::SetVibrancy(v8::Isolate* isolate,
 void BrowserWindow::OnWindowMaximize() {
   LOG(INFO) << "BrowserWindow::OnWindowMaximize";
   TopLevelWindow::OnWindowMaximize();
-  UpdateDraggableRegions(nullptr, draggable_regions_);
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
 }
 
 void BrowserWindow::OnWindowUnmaximize() {
   LOG(INFO) << "BrowserWindow::OnWindowUnmaximize";
   TopLevelWindow::OnWindowUnmaximize();
-  UpdateDraggableRegions(nullptr, draggable_regions_);
+  UpdateDraggableRegions(nullptr, GetDraggableRegions());
 }
 
 void BrowserWindow::FocusOnWebView() {
@@ -442,6 +445,22 @@ void BrowserWindow::Cleanup() {
   // because destroy() might be called inside WebContents's event handler.
   api_web_contents_->DestroyWebContents(!Browser::Get()->is_shutting_down());
   Observe(nullptr);
+}
+
+std::vector<DraggableRegion> BrowserWindow::GetDraggableRegions() const {
+  if (browser_views_.empty())
+    return draggable_regions_;
+
+  mate::Handle<BrowserView> browser_view;
+  if (mate::ConvertFromV8(
+          isolate(),
+          v8::Local<v8::Value>::New(isolate(), browser_views_.begin()->second),
+          &browser_view) &&
+      !browser_view.IsEmpty() && !browser_view->draggable_regions().empty()) {
+    return browser_view->draggable_regions();
+  }
+
+  return draggable_regions_;
 }
 
 // static
