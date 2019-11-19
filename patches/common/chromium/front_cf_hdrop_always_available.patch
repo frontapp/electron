@@ -1,23 +1,11 @@
-From 6a80c7a708556b0ca0cc2461790c0e4daa5af13b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jeremy Spiegel <jeremy.spiegel@frontapp.com>
 Date: Wed, 2 Oct 2019 11:08:13 -0700
-Subject: [PATCH] Make CF_HDROP always available for virtual file
+Subject: Make CF_HDROP always available for virtual file
 
----
- .../browser/download/drag_download_file.cc    |  20 +-
- content/browser/download/drag_download_file.h |   1 +
- .../browser/download/drag_download_util.cc    |   3 +
- content/browser/download/drag_download_util.h |   1 +
- .../web_contents/web_contents_view_aura.cc    |   2 +-
- ui/base/dragdrop/download_file_interface.h    |   1 +
- ui/base/dragdrop/drag_source_win.cc           |   1 +
- .../dragdrop/os_exchange_data_provider_win.cc | 336 +++++++++++++++++-
- .../dragdrop/os_exchange_data_provider_win.h  |  12 +
- .../desktop_drag_drop_client_win.cc           |   3 +
- 10 files changed, 371 insertions(+), 9 deletions(-)
 
 diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
-index c15e78c9ef1d..4b12d10e2413 100644
+index c15e78c9ef1d71772ee412764976c19924af5b8e..4b12d10e24139c1544d8bd4eb7867be40a69638e 100644
 --- a/content/browser/download/drag_download_file.cc
 +++ b/content/browser/download/drag_download_file.cc
 @@ -28,6 +28,7 @@ namespace content {
@@ -86,7 +74,7 @@ index c15e78c9ef1d..4b12d10e2413 100644
  #if defined(OS_WIN)
    DCHECK(drag_task_runner_->BelongsToCurrentThread());
 diff --git a/content/browser/download/drag_download_file.h b/content/browser/download/drag_download_file.h
-index 635a9092c7bd..5ce775223e6a 100644
+index 635a9092c7bd7650a34d7180c7a08543204e1370..5ce775223e6aa66cf7dc9ce91abcb73e27c70c09 100644
 --- a/content/browser/download/drag_download_file.h
 +++ b/content/browser/download/drag_download_file.h
 @@ -55,6 +55,7 @@ class CONTENT_EXPORT DragDownloadFile : public ui::DownloadFileProvider {
@@ -98,7 +86,7 @@ index 635a9092c7bd..5ce775223e6a 100644
  
    base::FilePath file_path_;
 diff --git a/content/browser/download/drag_download_util.cc b/content/browser/download/drag_download_util.cc
-index a91ec48853c6..6dd8ddca02ee 100644
+index a91ec48853c6250a5f213ab79e0f757c42bb8acb..6dd8ddca02ee03e69e8d5ab81ea02efbc67d316c 100644
 --- a/content/browser/download/drag_download_util.cc
 +++ b/content/browser/download/drag_download_util.cc
 @@ -103,6 +103,9 @@ void PromiseFileFinalizer::OnDownloadCompleted(
@@ -112,7 +100,7 @@ index a91ec48853c6..6dd8ddca02ee 100644
    base::PostTaskWithTraits(
        FROM_HERE, {BrowserThread::UI},
 diff --git a/content/browser/download/drag_download_util.h b/content/browser/download/drag_download_util.h
-index 343ef798fba6..86d3749e9cbd 100644
+index 343ef798fba619646d6132fdb8044e0a8accd7ee..86d3749e9cbdbd6597997f42a4a78d4586fb44f1 100644
 --- a/content/browser/download/drag_download_util.h
 +++ b/content/browser/download/drag_download_util.h
 @@ -46,6 +46,7 @@ class PromiseFileFinalizer : public ui::DownloadFileObserver {
@@ -124,7 +112,7 @@ index 343ef798fba6..86d3749e9cbd 100644
  
   protected:
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 3b06cee64b44..11621d990358 100644
+index 3b06cee64b4400ca57f24b52384bb2b60649cff7..11621d990358259091181fe2985f39e27b190b5b 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -221,7 +221,7 @@ void PrepareDragForDownload(
@@ -137,7 +125,7 @@ index 3b06cee64b44..11621d990358 100644
    provider->SetDownloadFileInfo(file_download);
  }
 diff --git a/ui/base/dragdrop/download_file_interface.h b/ui/base/dragdrop/download_file_interface.h
-index db82ff2d2c60..e1264d21a18b 100644
+index db82ff2d2c60bab716fe45810ada4cb2c6dd8b7b..e1264d21a18bfc52b52e1d0c01752011a11f7e06 100644
 --- a/ui/base/dragdrop/download_file_interface.h
 +++ b/ui/base/dragdrop/download_file_interface.h
 @@ -28,6 +28,7 @@ class UI_BASE_EXPORT DownloadFileObserver
@@ -149,7 +137,7 @@ index db82ff2d2c60..e1264d21a18b 100644
  
   protected:
 diff --git a/ui/base/dragdrop/drag_source_win.cc b/ui/base/dragdrop/drag_source_win.cc
-index a797a721a773..e22e9908cb5e 100644
+index a797a721a7737aacf206a3ce4c21c25628126313..e22e9908cb5e9f1885e75d336468448434239b43 100644
 --- a/ui/base/dragdrop/drag_source_win.cc
 +++ b/ui/base/dragdrop/drag_source_win.cc
 @@ -38,6 +38,7 @@ HRESULT DragSourceWin::GiveFeedback(DWORD effect) {
@@ -161,7 +149,7 @@ index a797a721a773..e22e9908cb5e 100644
    ui::OSExchangeDataProviderWin::GetDataObjectImpl(*data_)
        ->set_in_drag_loop(false);
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
-index db7425bbf14d..fc7a5d704795 100644
+index db7425bbf14d53a4b29833833ad7e9a8c70c6f1d..97f81b01dd06bb299edf1244d92b40b82b7104d6 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
 @@ -7,22 +7,28 @@
@@ -231,18 +219,19 @@ index db7425bbf14d..fc7a5d704795 100644
    std::vector<base::string16> filenames;
    bool success = ClipboardUtil::GetFilenames(source_object_.Get(), &filenames);
    if (success)
-@@ -447,6 +460,10 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
+@@ -447,6 +460,11 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
  
  bool OSExchangeDataProviderWin::GetFilenames(
      std::vector<FileInfo>* filenames) const {
 +  LOG(INFO) << "GetFilenames";
-+  if (!HasCustomFormat(ClipboardFormatType::GetType("CF_FrontInDragLoop")))
++  if (HasCustomFormat(ClipboardFormatType::GetType("CF_FrontDragSource")) &&
++      !HasCustomFormat(ClipboardFormatType::GetType("CF_FrontInDragLoop")))
 +    return false;
 +
    std::vector<base::string16> filenames_local;
    bool success =
        ClipboardUtil::GetFilenames(source_object_.Get(), &filenames_local);
-@@ -530,13 +547,19 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
+@@ -530,13 +548,19 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
  
  void OSExchangeDataProviderWin::SetDownloadFileInfo(
      const OSExchangeData::DownloadFileInfo& download) {
@@ -263,7 +252,7 @@ index db7425bbf14d..fc7a5d704795 100644
  
    // Add CF_HDROP.
    auto info = std::make_unique<DataObjectImpl::StoredDataInfo>(
-@@ -545,7 +568,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
+@@ -545,7 +569,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
    data_->contents_.push_back(std::move(info));
  
    // Adding a download file always enables async mode.
@@ -272,7 +261,7 @@ index db7425bbf14d..fc7a5d704795 100644
  }
  
  void OSExchangeDataProviderWin::SetDragImage(
-@@ -686,9 +709,96 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
+@@ -686,9 +710,96 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
      destination->pUnkForRelease->AddRef();
  }
  
@@ -369,7 +358,7 @@ index db7425bbf14d..fc7a5d704795 100644
  }
  
  DataObjectImpl::StoredDataInfo::~StoredDataInfo() {
-@@ -705,8 +815,13 @@ DataObjectImpl::DataObjectImpl()
+@@ -705,8 +816,13 @@ DataObjectImpl::DataObjectImpl()
        in_drag_loop_(false),
        in_async_mode_(false),
        async_operation_started_(false),
@@ -385,7 +374,7 @@ index db7425bbf14d..fc7a5d704795 100644
  
  DataObjectImpl::~DataObjectImpl() {
    StopDownloads();
-@@ -725,6 +840,8 @@ void DataObjectImpl::StopDownloads() {
+@@ -725,6 +841,8 @@ void DataObjectImpl::StopDownloads() {
  }
  
  void DataObjectImpl::RemoveData(const FORMATETC& format) {
@@ -394,7 +383,7 @@ index db7425bbf14d..fc7a5d704795 100644
    if (format.ptd)
      return;  // Don't attempt to compare target devices.
  
-@@ -741,6 +858,8 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
+@@ -741,6 +859,8 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
  }
  
  void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
@@ -403,7 +392,7 @@ index db7425bbf14d..fc7a5d704795 100644
    DataObjectImpl::StoredData::iterator iter = contents_.begin();
    for (; iter != contents_.end(); ++iter) {
      if ((*iter)->format_etc.cfFormat == CF_HDROP) {
-@@ -762,20 +881,204 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
+@@ -762,20 +882,204 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
      }
    }
    DCHECK(iter != contents_.end());
@@ -476,9 +465,8 @@ index db7425bbf14d..fc7a5d704795 100644
 +    if (!DestroyWindow(hwnd))
 +      PLOG(ERROR) << "Failed to destroy download progress window";
 +  }
- }
- 
--void DataObjectImpl::OnDownloadAborted() {
++}
++
 +LRESULT CALLBACK WindowProc(HWND hwnd,
 +                            UINT uiMsg,
 +                            WPARAM wParam,
@@ -531,8 +519,9 @@ index db7425bbf14d..fc7a5d704795 100644
 +    PLOG(ERROR) << "Failed to register the window class for the download "
 +                   "progress window";
 +  }
-+}
-+
+ }
+ 
+-void DataObjectImpl::OnDownloadAborted() {
 +DragDownloadWindowClass::~DragDownloadWindowClass() {
 +  if (atom_ != 0) {
 +    BOOL result = UnregisterClass(MAKEINTATOM(atom_), instance_);
@@ -610,7 +599,7 @@ index db7425bbf14d..fc7a5d704795 100644
        // If medium is NULL, delay-rendering will be used.
        if ((*iter)->medium) {
          DuplicateMedium((*iter)->format_etc.cfFormat, (*iter)->medium, medium);
-@@ -820,21 +1123,29 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
+@@ -820,21 +1124,32 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
      ++iter;
    }
  
@@ -627,6 +616,9 @@ index db7425bbf14d..fc7a5d704795 100644
  HRESULT DataObjectImpl::QueryGetData(FORMATETC* format_etc) {
 +  LOG(INFO) << "QueryGetData in_drag_loop: " << in_drag_loop_
 +            << " format_etc: " << FormatFormatEtc(format_etc);
++  if (format_etc->cfFormat == ClipboardFormatType::GetType("CF_FrontDragSource").ToFormatEtc().cfFormat)
++    return S_OK;
++
 +  if (format_etc->cfFormat == ClipboardFormatType::GetType("CF_FrontInDragLoop").ToFormatEtc().cfFormat)
 +    return in_drag_loop_ ? S_OK : DV_E_FORMATETC;
 +
@@ -640,7 +632,7 @@ index db7425bbf14d..fc7a5d704795 100644
    return DV_E_FORMATETC;
  }
  
-@@ -846,6 +1157,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
+@@ -846,6 +1161,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
  
  HRESULT DataObjectImpl::SetData(
      FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
@@ -649,7 +641,7 @@ index db7425bbf14d..fc7a5d704795 100644
    RemoveData(*format_etc);
  
    STGMEDIUM* local_medium = new STGMEDIUM;
-@@ -897,26 +1210,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
+@@ -897,26 +1214,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
  
  HRESULT DataObjectImpl::EndOperation(
      HRESULT result, IBindCtx* reserved, DWORD effects) {
@@ -681,7 +673,7 @@ index db7425bbf14d..fc7a5d704795 100644
    async_operation_started_ = true;
    return S_OK;
  }
-@@ -928,11 +1246,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
+@@ -928,11 +1250,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
    if (!object)
      return E_POINTER;
    if (IsEqualIID(iid, IID_IDataObject) || IsEqualIID(iid, IID_IUnknown)) {
@@ -700,7 +692,7 @@ index db7425bbf14d..fc7a5d704795 100644
      return E_NOINTERFACE;
    }
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.h b/ui/base/dragdrop/os_exchange_data_provider_win.h
-index 96fa77ec7633..616f21187b80 100644
+index 96fa77ec7633dcae1509ff145793df921d6e5f1a..616f21187b802dc43f9011121d43b9db8ef0b4ca 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.h
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.h
 @@ -53,6 +53,7 @@ class DataObjectImpl : public DownloadFileObserver,
@@ -730,7 +722,7 @@ index 96fa77ec7633..616f21187b80 100644
  
  class UI_BASE_EXPORT OSExchangeDataProviderWin
 diff --git a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
-index 2800896f01fc..37e4e2dae09b 100644
+index 2800896f01fc61259ccf63107b35d14a39d98bab..37e4e2dae09b868b0a968f22535b677a6cb7bcdf 100644
 --- a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
 +++ b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
 @@ -4,6 +4,7 @@
@@ -753,6 +745,3 @@ index 2800896f01fc..37e4e2dae09b 100644
    drag_source_copy->set_data(nullptr);
  
    if (alive)
--- 
-2.23.0.windows.1
-
