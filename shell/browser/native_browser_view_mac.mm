@@ -44,7 +44,7 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 }
 
 - (void)mouseDown:(NSEvent*)event {
-  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
+  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent:)]) {
     // According to Google, using performWindowDragWithEvent:
     // does not generate a NSWindowWillMoveNotification. Hence post one.
     [[NSNotificationCenter defaultCenter]
@@ -65,7 +65,7 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 }
 
 - (void)mouseDragged:(NSEvent*)theEvent {
-  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
+  if ([self.window respondsToSelector:@selector(performWindowDragWithEvent:)]) {
     return;
   }
 
