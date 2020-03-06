@@ -727,7 +727,7 @@ index 70fba4d76117cf31e1841ec324d6fb1d347b0265..cc07feebe33e848842e407ec19638555
 +  DownloadFileProvider* download_file_provider_;
 +  int download_progress_;
 +
-+  friend DWORD DownloadThread(LPVOID parameter);
++  friend DWORD WINAPI DownloadThread(LPVOID parameter);
 +  friend BOOL OnCreate(HWND hwnd, LPCREATESTRUCT lpcs);
 +  friend void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify);
 +  friend void OnDestroy(HWND hwnd);
