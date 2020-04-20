@@ -148,7 +148,7 @@ index a797a721a7737aacf206a3ce4c21c25628126313..e22e9908cb5e9f1885e75d3364684484
    ui::OSExchangeDataProviderWin::GetDataObjectImpl(*data_)
        ->set_in_drag_loop(false);
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
-index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddbe34ba099 100644
+index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68edc6baceb 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
 @@ -10,22 +10,27 @@
@@ -391,7 +391,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
    for (std::unique_ptr<StoredDataInfo>& content : contents_) {
      if (content->format_etc.cfFormat == CF_HDROP) {
        // Retrieve the downloader first so it won't get destroyed.
-@@ -898,24 +1019,216 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
+@@ -898,24 +1019,224 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
        // Replace stored data.
        STGMEDIUM* storage =
            GetStorageForFileNames({FileInfo(file_path, base::FilePath())});
@@ -527,9 +527,8 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
 +    PLOG(ERROR) << "Failed to register the window class for the download "
 +                   "progress window";
 +  }
- }
- 
--void DataObjectImpl::OnDownloadAborted() {}
++}
++
 +DragDownloadWindowClass::~DragDownloadWindowClass() {
 +  if (atom_ != 0) {
 +    BOOL result = UnregisterClass(MAKEINTATOM(atom_), instance_);
@@ -537,8 +536,9 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
 +    // were leaked.
 +    DCHECK(result);
 +  }
-+}
-+
+ }
+ 
+-void DataObjectImpl::OnDownloadAborted() {}
 +#pragma comment(lib, "Comctl32.lib")
 +
 +DWORD WINAPI DownloadThread(LPVOID parameter) {
@@ -572,6 +572,30 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
 +
 +  return 0;
 +}
++
++HRESULT DataObjectImpl::WaitForDownload() {
++  HANDLE thread = CreateThread(NULL, 0, &DownloadThread, this, 0, NULL);
++  if (!thread)
++    PLOG(ERROR) << "Failed to create download progress thread";
++  else
++    CloseHandle(thread);
++
++  LOG(INFO) << "Waiting for download";
++  if (!download_file_provider_->Wait()) {
++    LOG(INFO) << "Wait failed, DV_E_FORMATETC";
++    if (download_progress_window_)
++      PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
++    is_aborting_ = true;
++    return DV_E_FORMATETC;
++  }
++
++  LOG(INFO) << "Wait finished";
++  if (download_progress_window_)
++    PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
++
++  download_finished_ = true;
++  return S_OK;
++}
  
  HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
 +  LOG(INFO) << "GetData in_drag_loop: " << in_drag_loop_
@@ -587,33 +611,17 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
          (content->format_etc.tymed & format_etc->tymed)) {
 +      if (download_file_provider_ && content->format_etc.cfFormat == CF_HDROP &&
 +          !in_drag_loop_ && !download_finished_ && !is_aborting_) {
-+        HANDLE thread = CreateThread(NULL, 0, &DownloadThread, this, 0, NULL);
-+        if (!thread)
-+          PLOG(ERROR) << "Failed to create download progress thread";
-+        else
-+          CloseHandle(thread);
++        HRESULT result = WaitForDownload();
++        if (FAILED(result))
++          return result;
 +
-+        LOG(INFO) << "Waiting for download";
-+        if (!download_file_provider_->Wait()) {
-+          LOG(INFO) << "Wait failed, DV_E_FORMATETC";
-+          if (download_progress_window_)
-+            PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
-+          is_aborting_ = true;
-+          return DV_E_FORMATETC;
-+        }
-+
-+        LOG(INFO) << "Wait finished";
-+        if (download_progress_window_)
-+          PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
-+
-+        download_finished_ = true;
 +        return GetData(format_etc, medium);
 +      }
 +
        // If medium is NULL, delay-rendering will be used.
        if (content->medium) {
          DuplicateMedium(content->format_etc.cfFormat, content->medium, medium);
-@@ -952,19 +1265,30 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
+@@ -952,19 +1273,37 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
      }
    }
  
@@ -636,6 +644,13 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
 +  if (format_etc->cfFormat == ClipboardFormatType::GetType("CF_FrontInDragLoop").ToFormatEtc().cfFormat)
 +    return in_drag_loop_ ? S_OK : DV_E_FORMATETC;
 +
++  if (download_file_provider_ && format_etc->cfFormat == CF_HDROP &&
++      !in_drag_loop_ && !download_finished_ && !is_aborting_) {
++    HRESULT result = WaitForDownload();
++    if (FAILED(result))
++      return result;
++  }
++
    for (const std::unique_ptr<StoredDataInfo>& content : contents_) {
      if (content->format_etc.cfFormat == format_etc->cfFormat)
        return S_OK;
@@ -644,7 +659,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
    return DV_E_FORMATETC;
  }
  
-@@ -976,6 +1300,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
+@@ -976,6 +1315,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
  
  HRESULT DataObjectImpl::SetData(
      FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
@@ -653,7 +668,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
    RemoveData(*format_etc);
  
    STGMEDIUM* local_medium = new STGMEDIUM;
-@@ -1027,26 +1353,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
+@@ -1027,26 +1368,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
  
  HRESULT DataObjectImpl::EndOperation(
      HRESULT result, IBindCtx* reserved, DWORD effects) {
@@ -685,7 +700,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
    async_operation_started_ = true;
    return S_OK;
  }
-@@ -1058,11 +1389,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
+@@ -1058,11 +1404,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
    if (!object)
      return E_POINTER;
    if (IsEqualIID(iid, IID_IDataObject) || IsEqualIID(iid, IID_IUnknown)) {
@@ -704,7 +719,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..8af4ed9c4ebcbe1489f8184799badddb
      return E_NOINTERFACE;
    }
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.h b/ui/base/dragdrop/os_exchange_data_provider_win.h
-index 70fba4d76117cf31e1841ec324d6fb1d347b0265..cc07feebe33e848842e407ec196385558eb10c75 100644
+index 70fba4d76117cf31e1841ec324d6fb1d347b0265..416b8707601c17fc3346b9b445b1cebe157c0d33 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.h
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.h
 @@ -45,6 +45,7 @@ class DataObjectImpl : public DownloadFileObserver,
@@ -715,7 +730,7 @@ index 70fba4d76117cf31e1841ec324d6fb1d347b0265..cc07feebe33e848842e407ec19638555
    void OnDownloadAborted() override;
  
    // IDataObject implementation:
-@@ -112,6 +113,18 @@ class DataObjectImpl : public DownloadFileObserver,
+@@ -112,6 +113,19 @@ class DataObjectImpl : public DownloadFileObserver,
    bool in_drag_loop_;
    bool in_async_mode_;
    bool async_operation_started_;
@@ -727,6 +742,7 @@ index 70fba4d76117cf31e1841ec324d6fb1d347b0265..cc07feebe33e848842e407ec19638555
 +  DownloadFileProvider* download_file_provider_;
 +  int download_progress_;
 +
++  HRESULT WaitForDownload();
 +  friend DWORD WINAPI DownloadThread(LPVOID parameter);
 +  friend BOOL OnCreate(HWND hwnd, LPCREATESTRUCT lpcs);
 +  friend void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify);
