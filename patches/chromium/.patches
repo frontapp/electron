@@ -159,3 +159,4 @@ cherry-pick-406ae3e8a9a8.patch
 cherry-pick-668cf831e912.patch
 cherry-pick-02f5ef8c88d7.patch
 cherry-pick-f37149c4434f.patch
+front_make_cf_hdrop_always_available_for_virtual_file.patch
