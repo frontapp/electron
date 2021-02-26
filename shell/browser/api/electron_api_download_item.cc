@@ -182,7 +182,7 @@ std::string DownloadItem::GetFilename() const {
   if (!CheckAlive())
     return "";
   return base::UTF16ToUTF8(
-      net::GenerateFileName(GetURL(), GetContentDisposition(), std::string(),
+      net::GenerateFileName(GetURL(), GetContentDisposition(), "ISO-8859-1",
                             download_item_->GetSuggestedFilename(),
                             GetMimeType(), "download")
           .LossyDisplayName());
