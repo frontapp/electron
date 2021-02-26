@@ -5,17 +5,17 @@ Subject: Front: Make CF_HDROP always available for virtual file
 
 
 diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
-index c6deec13817ce75d270eaf76514129ca9fbe204c..d01c15bc125ad0af2fa09e90a763e4b41c1c396b 100644
+index c6deec13817ce75d270eaf76514129ca9fbe204c..80869779826c1895075b04399c122281cfc88456 100644
 --- a/content/browser/download/drag_download_file.cc
 +++ b/content/browser/download/drag_download_file.cc
 @@ -28,6 +28,7 @@ namespace content {
  namespace {
-
+ 
  typedef base::Callback<void(bool)> OnCompleted;
 +typedef base::Callback<void(int)> OnProgress;
-
+ 
  }  // namespace
-
+ 
 @@ -39,8 +40,10 @@ class DragDownloadFile::DragDownloadFileUI
                       const Referrer& referrer,
                       const std::string& referrer_encoding,
@@ -40,31 +40,29 @@ index c6deec13817ce75d270eaf76514129ca9fbe204c..d01c15bc125ad0af2fa09e90a763e4b4
      }
 -    // Ignore other states.
    }
-
+ 
    void OnDownloadDestroyed(download::DownloadItem* item) override {
 @@ -166,6 +173,7 @@ class DragDownloadFile::DragDownloadFileUI
    }
-
+ 
    OnCompleted on_completed_;
 +  OnProgress on_progress_;
    GURL url_;
    Referrer referrer_;
    std::string referrer_encoding_;
-@@ -192,7 +200,9 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
+@@ -192,6 +200,8 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
    drag_ui_ =
        new DragDownloadFileUI(url, referrer, referrer_encoding, web_contents,
                               base::Bind(&DragDownloadFile::DownloadCompleted,
--                                        weak_ptr_factory_.GetWeakPtr()));
 +                                        weak_ptr_factory_.GetWeakPtr()),
 +                             base::Bind(&DragDownloadFile::DownloadProgressed,
-+                                        weak_ptr_factory_.GetWeakPtr()));
+                                         weak_ptr_factory_.GetWeakPtr()));
    DCHECK(!file_path_.empty());
  }
-
 @@ -261,4 +271,10 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
      file_observer->OnDownloadAborted();
  }
-
+ 
 +void DragDownloadFile::DownloadProgressed(int percent_complete) {
 +  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 +
@@ -78,11 +76,11 @@ index 25dc7db9b96090bb5c937793fc8b827fe653564b..7b37c12fa4c959d364a1132f2eb2d45a
 +++ b/content/browser/download/drag_download_file.h
 @@ -54,6 +54,7 @@ class CONTENT_EXPORT DragDownloadFile : public ui::DownloadFileProvider {
    enum State {INITIALIZED, STARTED, SUCCESS, FAILURE};
-
+ 
    void DownloadCompleted(bool is_successful);
 +  void DownloadProgressed(int percent_complete);
    void CheckThread();
-
+ 
    base::FilePath file_path_;
 diff --git a/content/browser/download/drag_download_util.cc b/content/browser/download/drag_download_util.cc
 index 4d8e800ae87307ee7e90c0bff006e8549ab62290..5021611d1a6f02c8361be79fe36595d54c1415d6 100644
@@ -91,7 +89,7 @@ index 4d8e800ae87307ee7e90c0bff006e8549ab62290..5021611d1a6f02c8361be79fe36595d5
 @@ -101,6 +101,9 @@ void PromiseFileFinalizer::OnDownloadCompleted(
                   base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
  }
-
+ 
 +void PromiseFileFinalizer::OnDownloadProgressed(int percent_complete) {
 +}
 +
@@ -103,12 +101,12 @@ index a019fc2ce15d09dffaaa5783a07500fcd52b5509..f57232e2e8333132332ea6c83451be05
 --- a/content/browser/download/drag_download_util.h
 +++ b/content/browser/download/drag_download_util.h
 @@ -47,6 +47,7 @@ class PromiseFileFinalizer : public ui::DownloadFileObserver {
-
+ 
    // DownloadFileObserver methods.
    void OnDownloadCompleted(const base::FilePath& file_path) override;
 +  void OnDownloadProgressed(int percent_complete) override;
    void OnDownloadAborted() override;
-
+ 
   protected:
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
 index 5368aafddd91cc75075700c8f93e3d7ea8f6435b..ea5da1960e83bdf82a8990166003ba5014b00b64 100644
@@ -133,7 +131,7 @@ index 72e41ce4a40921f469bcc76eaa2017a5a495b89a..cceb41c7144bbd96f1b3a52b7270226b
    virtual void OnDownloadCompleted(const base::FilePath& file_path) = 0;
 +  virtual void OnDownloadProgressed(int percentComplete) = 0;
    virtual void OnDownloadAborted() = 0;
-
+ 
   protected:
 diff --git a/ui/base/dragdrop/drag_source_win.cc b/ui/base/dragdrop/drag_source_win.cc
 index a797a721a7737aacf206a3ce4c21c25628126313..e22e9908cb5e9f1885e75d336468448434239b43 100644
@@ -141,14 +139,14 @@ index a797a721a7737aacf206a3ce4c21c25628126313..e22e9908cb5e9f1885e75d3364684484
 +++ b/ui/base/dragdrop/drag_source_win.cc
 @@ -38,6 +38,7 @@ HRESULT DragSourceWin::GiveFeedback(DWORD effect) {
  }
-
+ 
  void DragSourceWin::OnDragSourceDrop() {
 +  LOG(INFO) << "DragSourceWin::OnDragSourceDrop";
    DCHECK(data_);
    ui::OSExchangeDataProviderWin::GetDataObjectImpl(*data_)
        ->set_in_drag_loop(false);
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
-index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68edc6baceb 100644
+index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e0f854e229ecf87291f5bc13cedc3f6610bf5af5 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
 @@ -10,22 +10,27 @@
@@ -157,10 +155,10 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
  #include <stdint.h>
 +#include <windowsx.h>
  #include <wrl/client.h>
-
+ 
  #include <algorithm>
  #include <iterator>
-
+ 
 +#include "base/files/file.h"
  #include "base/callback.h"
  #include "base/containers/span.h"
@@ -181,7 +179,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
  #include "skia/ext/skia_utils_win.h"
 @@ -298,9 +303,12 @@ OSExchangeDataProviderWin::Clone() const {
  }
-
+ 
  void OSExchangeDataProviderWin::MarkOriginatedFromRenderer() {
 +  // Needed for drops to VS Code to work
 +#if 0
@@ -190,10 +188,10 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
        GetRendererTaintFormatType().ToFormatEtc(), storage));
 +#endif
  }
-
+ 
  bool OSExchangeDataProviderWin::DidOriginateFromRenderer() const {
 @@ -320,6 +328,7 @@ void OSExchangeDataProviderWin::SetString(const base::string16& data) {
-
+ 
  void OSExchangeDataProviderWin::SetURL(const GURL& url,
                                         const base::string16& title) {
 +  LOG(INFO) << "SetURL url: " << url.spec() << " title: " << title;
@@ -211,14 +209,14 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
    data_->contents_.push_back(std::make_unique<DataObjectImpl::StoredDataInfo>(
 @@ -559,6 +570,7 @@ bool OSExchangeDataProviderWin::GetURLAndTitle(
  }
-
+ 
  bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
 +  LOG(INFO) << "GetFilename";
    std::vector<base::string16> filenames;
    bool success = ClipboardUtil::GetFilenames(source_object_.Get(), &filenames);
    if (success)
 @@ -568,6 +580,11 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
-
+ 
  bool OSExchangeDataProviderWin::GetFilenames(
      std::vector<FileInfo>* filenames) const {
 +  LOG(INFO) << "GetFilenames";
@@ -230,7 +228,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
    bool success =
        ClipboardUtil::GetFilenames(source_object_.Get(), &filenames_local);
 @@ -684,13 +701,18 @@ bool OSExchangeDataProviderWin::HasCustomFormat(
-
+ 
  void OSExchangeDataProviderWin::SetDownloadFileInfo(
      OSExchangeData::DownloadFileInfo* download) {
 +  LOG(INFO) << "SetDownloadFileInfo download->filename: "
@@ -246,22 +244,22 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
    if (!download->filename.empty())
 -    GetStorageForFileNames({FileInfo(download->filename, base::FilePath())});
 +    storage = GetStorageForFileNames({FileInfo(download->filename, base::FilePath())});
-
+ 
    // Add CF_HDROP.
    auto info = std::make_unique<DataObjectImpl::StoredDataInfo>(
 @@ -699,7 +721,7 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
    data_->contents_.push_back(std::move(info));
-
+ 
    // Adding a download file always enables async mode.
 -  data_->SetAsyncMode(VARIANT_TRUE);
 +  // data_->SetAsyncMode(VARIANT_TRUE);
  }
-
+ 
  void OSExchangeDataProviderWin::SetDragImage(
 @@ -840,9 +862,97 @@ static void DuplicateMedium(CLIPFORMAT source_clipformat,
      destination->pUnkForRelease->AddRef();
  }
-
+ 
 +std::wstring FormatFormatEtc(const FORMATETC* format_etc) {
 +  std::wstring result = L"(";
 +  WCHAR name[1024]{};
@@ -354,7 +352,7 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +  LOG(INFO) << "StoredDataInfo::StoredDataInfo format_etc: "
 +            << FormatFormatEtc(&format_etc) << ", medium: " << (medium ? 1 : 0);
 +}
-
+ 
  DataObjectImpl::StoredDataInfo::~StoredDataInfo() {
    if (owns_medium) {
 @@ -857,7 +967,13 @@ DataObjectImpl::DataObjectImpl()
@@ -369,21 +367,21 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +      download_progress_font_(NULL),
 +      download_file_provider_(0),
 +      download_progress_(0) {}
-
+ 
  DataObjectImpl::~DataObjectImpl() {
    StopDownloads();
 @@ -873,6 +989,8 @@ void DataObjectImpl::StopDownloads() {
  }
-
+ 
  void DataObjectImpl::RemoveData(const FORMATETC& format) {
 +  LOG(INFO) << "RemoveData in_drag_loop: " << in_drag_loop_
 +            << " format_etc: " << FormatFormatEtc(&format);
    if (format.ptd)
      return;  // Don't attempt to compare target devices.
-
+ 
 @@ -889,6 +1007,9 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
  }
-
+ 
  void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
 +  if (download_progress_window_)
 +    PostMessage(download_progress_window_, WM_CLOSE, 0, 0);
@@ -485,8 +483,9 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +    HANDLE_MSG(hwnd, WM_COMMAND, OnCommand);
 +  }
 +  return DefWindowProc(hwnd, uiMsg, wParam, lParam);
-+}
-+
+ }
+ 
+-void DataObjectImpl::OnDownloadAborted() {}
 +const wchar_t kDragDownloadingWindowClassName[] = L"Front_DragDownloadWindow";
 +
 +class DragDownloadWindowClass {
@@ -536,9 +535,8 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +    // were leaked.
 +    DCHECK(result);
 +  }
- }
-
--void DataObjectImpl::OnDownloadAborted() {}
++}
++
 +#pragma comment(lib, "Comctl32.lib")
 +
 +DWORD WINAPI DownloadThread(LPVOID parameter) {
@@ -596,14 +594,14 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +  download_finished_ = true;
 +  return S_OK;
 +}
-
+ 
  HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
 +  LOG(INFO) << "GetData in_drag_loop: " << in_drag_loop_
 +            << ", format_etc: " << FormatFormatEtc(format_etc)
 +            << ", is_aborting_: " << is_aborting_;
    if (is_aborting_)
      return DV_E_FORMATETC;
-
+ 
    for (const std::unique_ptr<StoredDataInfo>& content : contents_) {
      if (content->format_etc.cfFormat == format_etc->cfFormat &&
 -        content->format_etc.lindex == format_etc->lindex &&
@@ -624,17 +622,17 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 @@ -952,19 +1273,37 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
      }
    }
-
+ 
 +  LOG(INFO) << "GetData no matching format, DV_E_FORMATETC";
    return DV_E_FORMATETC;
  }
-
+ 
  HRESULT DataObjectImpl::GetDataHere(FORMATETC* format_etc,
                                      STGMEDIUM* medium) {
 +  LOG(INFO) << "GetDataHere";
    return DATA_E_FORMATETC;
  }
-
+ 
  HRESULT DataObjectImpl::QueryGetData(FORMATETC* format_etc) {
 +  LOG(INFO) << "QueryGetData in_drag_loop: " << in_drag_loop_
 +            << " format_etc: " << FormatFormatEtc(format_etc);
@@ -658,43 +656,43 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
 +  LOG(INFO) << "QueryGetData DV_E_FORMATETC";
    return DV_E_FORMATETC;
  }
-
+ 
 @@ -976,6 +1315,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
-
+ 
  HRESULT DataObjectImpl::SetData(
      FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
 +  LOG(INFO) << "SetData in_drag_loop: " << in_drag_loop_
 +            << " format_etc: " << FormatFormatEtc(format_etc);
    RemoveData(*format_etc);
-
+ 
    STGMEDIUM* local_medium = new STGMEDIUM;
 @@ -1027,26 +1368,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
-
+ 
  HRESULT DataObjectImpl::EndOperation(
      HRESULT result, IBindCtx* reserved, DWORD effects) {
 +  LOG(INFO) << "EndOperation";
    async_operation_started_ = false;
    return S_OK;
  }
-
+ 
  HRESULT DataObjectImpl::GetAsyncMode(BOOL* is_op_async) {
 +  LOG(INFO) << "GetAsyncMode";
    *is_op_async = in_async_mode_ ? VARIANT_TRUE : VARIANT_FALSE;
    return S_OK;
  }
-
+ 
  HRESULT DataObjectImpl::InOperation(BOOL* in_async_op) {
 +  LOG(INFO) << "InOperation";
    *in_async_op = async_operation_started_ ? VARIANT_TRUE : VARIANT_FALSE;
    return S_OK;
  }
-
+ 
  HRESULT DataObjectImpl::SetAsyncMode(BOOL do_op_async) {
 +  LOG(INFO) << "SetAsyncMode";
    in_async_mode_ = !!do_op_async;
    return S_OK;
  }
-
+ 
  HRESULT DataObjectImpl::StartOperation(IBindCtx* reserved) {
 +  LOG(INFO) << "StartOperation";
    async_operation_started_ = true;
@@ -719,16 +717,16 @@ index 4b7c0656c60b09f61ab201c2900d5b4d6844f4d2..e6774201a2c230030bbfd508bf81c68e
      return E_NOINTERFACE;
    }
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.h b/ui/base/dragdrop/os_exchange_data_provider_win.h
-index 70fba4d76117cf31e1841ec324d6fb1d347b0265..416b8707601c17fc3346b9b445b1cebe157c0d33 100644
+index 70fba4d76117cf31e1841ec324d6fb1d347b0265..a8d2faf3953d740915495c7eb2f9d9c744f7ed47 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.h
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.h
 @@ -45,6 +45,7 @@ class DataObjectImpl : public DownloadFileObserver,
-
+ 
    // DownloadFileObserver implementation:
    void OnDownloadCompleted(const base::FilePath& file_path) override;
 +  void OnDownloadProgressed(int percent_complete) override;
    void OnDownloadAborted() override;
-
+ 
    // IDataObject implementation:
 @@ -112,6 +113,19 @@ class DataObjectImpl : public DownloadFileObserver,
    bool in_drag_loop_;
@@ -748,16 +746,16 @@ index 70fba4d76117cf31e1841ec324d6fb1d347b0265..416b8707601c17fc3346b9b445b1cebe
 +  friend void OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify);
 +  friend void OnDestroy(HWND hwnd);
  };
-
+ 
  class UI_BASE_EXPORT OSExchangeDataProviderWin
 diff --git a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
 index 984d4098effff811e636f57f1d344f253e717d3a..5614045879d32ed84add141f4ee47eb992d64f04 100644
 --- a/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
 +++ b/ui/views/widget/desktop_aura/desktop_drag_drop_client_win.cc
 @@ -4,6 +4,7 @@
-
+ 
  #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_win.h"
-
+ 
 +#include "base/logging.h"
  #include "base/metrics/histogram_macros.h"
  #include "ui/base/dragdrop/drag_drop_types.h"
@@ -765,7 +763,7 @@ index 984d4098effff811e636f57f1d344f253e717d3a..5614045879d32ed84add141f4ee47eb9
 @@ -49,10 +50,12 @@ int DesktopDragDropClientWin::StartDragAndDrop(
    UMA_HISTOGRAM_ENUMERATION("Event.DragDrop.Start", source,
                              ui::DragDropTypes::DRAG_EVENT_SOURCE_COUNT);
-
+ 
 +  LOG(INFO) << "StartDragAndDrop operation: " << operation;
    HRESULT result = DoDragDrop(
        ui::OSExchangeDataProviderWin::GetIDataObject(*data.get()),
@@ -773,5 +771,5 @@ index 984d4098effff811e636f57f1d344f253e717d3a..5614045879d32ed84add141f4ee47eb9
        ui::DragDropTypes::DragOperationToDropEffect(operation), &effect);
 +  LOG(INFO) << "StartDragAndDrop result: " << result << ", effect: " << effect;
    drag_source_copy->set_data(nullptr);
-
+ 
    if (alive)
