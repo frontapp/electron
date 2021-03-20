@@ -3,9 +3,10 @@ From: Jeremy Spiegel <jeremy.spiegel@frontapp.com>
 Date: Wed, 2 Oct 2019 11:08:13 -0700
 Subject: Front: Make CF_HDROP always available for virtual file
 
+TODO: Write justification.
 
 diff --git a/content/browser/download/drag_download_file.cc b/content/browser/download/drag_download_file.cc
-index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..cf3610cec2b7cc574b319d39e0f042504fe0031a 100644
+index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..0071849b83458bf1dfb7ac80486e9aed23b74496 100644
 --- a/content/browser/download/drag_download_file.cc
 +++ b/content/browser/download/drag_download_file.cc
 @@ -27,6 +27,7 @@ namespace content {
@@ -16,7 +17,7 @@ index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..cf3610cec2b7cc574b319d39e0f04250
  
  }  // namespace
  
-@@ -39,8 +40,10 @@ class DragDownloadFile::DragDownloadFileUI
+@@ -39,14 +40,17 @@ class DragDownloadFile::DragDownloadFileUI
                       const std::string& referrer_encoding,
                       int render_process_id,
                       int render_frame_id,
@@ -28,21 +29,28 @@ index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..cf3610cec2b7cc574b319d39e0f04250
          url_(url),
          referrer_(referrer),
          referrer_encoding_(referrer_encoding),
-@@ -150,8 +153,12 @@ class DragDownloadFile::DragDownloadFileUI
+         render_process_id_(render_process_id),
+         render_frame_id_(render_frame_id) {
+     DCHECK(on_completed_);
++    DCHECK(on_progress_);
+     DCHECK_GE(render_frame_id_, 0);
+     // May be called on any thread.
+     // Do not call weak_ptr_factory_.GetWeakPtr() outside the UI thread.
+@@ -150,8 +154,12 @@ class DragDownloadFile::DragDownloadFileUI
        }
        download_item_->RemoveObserver(this);
        download_item_ = nullptr;
-+    } else {
++    } else if (on_progress_) {
 +      GetUIThreadTaskRunner({})->PostTask(
 +          FROM_HERE,
-+          base::BindRepeating(on_progress_,
++          base::BindRepeating(std::move(on_progress_),
 +                              download_item_->PercentComplete()));
      }
 -    // Ignore other states.
    }
  
    void OnDownloadDestroyed(download::DownloadItem* item) override {
-@@ -168,6 +175,7 @@ class DragDownloadFile::DragDownloadFileUI
+@@ -168,6 +176,7 @@ class DragDownloadFile::DragDownloadFileUI
    }
  
    OnCompleted on_completed_;
@@ -50,7 +58,7 @@ index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..cf3610cec2b7cc574b319d39e0f04250
    GURL url_;
    Referrer referrer_;
    std::string referrer_encoding_;
-@@ -194,7 +202,9 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
+@@ -194,7 +203,9 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
        url, referrer, referrer_encoding, host->GetProcess()->GetID(),
        host->GetRoutingID(),
        base::BindOnce(&DragDownloadFile::DownloadCompleted,
@@ -61,14 +69,15 @@ index 5dc8fe2214f6b5ef16445196e54ccb668c9fb5ef..cf3610cec2b7cc574b319d39e0f04250
    DCHECK(!file_path_.empty());
  }
  
-@@ -263,4 +273,10 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
+@@ -263,4 +274,11 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
      file_observer->OnDownloadAborted();
  }
  
 +void DragDownloadFile::DownloadProgressed(int percent_complete) {
 +  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 +
-+  observer_->OnDownloadProgressed(percent_complete);
++  if (observer_)
++    observer_->OnDownloadProgressed(percent_complete);
 +}
 +
  }  // namespace content
@@ -136,10 +145,18 @@ index b668b12d9e69d95d53e8a21198bdbac80472e277..36d01fbc618bda5d69d4f6e5292d8694
  
   protected:
 diff --git a/ui/base/dragdrop/drag_source_win.cc b/ui/base/dragdrop/drag_source_win.cc
-index e02b937473615111881ad214483c5f69ef25e61e..98ec2889494a3db3b7d85519e3d0a69080192269 100644
+index e02b937473615111881ad214483c5f69ef25e61e..47c4ca241cea0d9fb80be27c2b10a27dde8abbe2 100644
 --- a/ui/base/dragdrop/drag_source_win.cc
 +++ b/ui/base/dragdrop/drag_source_win.cc
-@@ -39,6 +39,7 @@ HRESULT DragSourceWin::GiveFeedback(DWORD effect) {
+@@ -4,6 +4,7 @@
+ 
+ #include "ui/base/dragdrop/drag_source_win.h"
+ 
++#include "base/logging.h"
+ #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
+ 
+ namespace ui {
+@@ -39,6 +40,7 @@ HRESULT DragSourceWin::GiveFeedback(DWORD effect) {
  }
  
  void DragSourceWin::OnDragSourceDrop() {
@@ -148,7 +165,7 @@ index e02b937473615111881ad214483c5f69ef25e61e..98ec2889494a3db3b7d85519e3d0a690
    OSExchangeDataProviderWin::GetDataObjectImpl(*data_)->set_in_drag_loop(false);
  }
 diff --git a/ui/base/dragdrop/os_exchange_data_provider_win.cc b/ui/base/dragdrop/os_exchange_data_provider_win.cc
-index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5deab97fa 100644
+index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..1d207b905eaf45a19cf55e1f5eeb8109d99d5d14 100644
 --- a/ui/base/dragdrop/os_exchange_data_provider_win.cc
 +++ b/ui/base/dragdrop/os_exchange_data_provider_win.cc
 @@ -10,23 +10,29 @@
@@ -352,14 +369,15 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
  DataObjectImpl::StoredDataInfo::~StoredDataInfo() {
    ReleaseStgMedium(&medium);
    if (downloader.get())
-@@ -824,13 +932,22 @@ DataObjectImpl::StoredDataInfo::TakeStorageMedium(const FORMATETC& format_etc,
+@@ -824,13 +932,23 @@ DataObjectImpl::StoredDataInfo::TakeStorageMedium(const FORMATETC& format_etc,
  
  DataObjectImpl::StoredDataInfo::StoredDataInfo(const FORMATETC& format_etc,
                                                 const STGMEDIUM& medium)
 -    : format_etc(format_etc), medium(medium) {}
 +    : format_etc(format_etc), medium(medium) {
 +  LOG(INFO) << "StoredDataInfo::StoredDataInfo format_etc: "
-+            << FormatFormatEtc(&format_etc) << ", medium: " << (medium ? 1 : 0);
++            << FormatFormatEtc(&format_etc) << ", medium: "
++            << (medium.tymed != TYMED_NULL ? 1 : 0);
 +}
  
  DataObjectImpl::DataObjectImpl()
@@ -377,7 +395,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
  
  DataObjectImpl::~DataObjectImpl() {
    StopDownloads();
-@@ -846,6 +963,8 @@ void DataObjectImpl::StopDownloads() {
+@@ -846,6 +964,8 @@ void DataObjectImpl::StopDownloads() {
  }
  
  void DataObjectImpl::RemoveData(const FORMATETC& format) {
@@ -386,7 +404,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
    if (format.ptd)
      return;  // Don't attempt to compare target devices.
  
-@@ -862,6 +981,9 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
+@@ -862,6 +982,9 @@ void DataObjectImpl::RemoveData(const FORMATETC& format) {
  }
  
  void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
@@ -396,7 +414,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
    for (std::unique_ptr<StoredDataInfo>& content : contents_) {
      if (content->format_etc.cfFormat == CF_HDROP) {
        // Retrieve the downloader first so it won't get destroyed.
-@@ -871,24 +993,224 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
+@@ -871,24 +994,224 @@ void DataObjectImpl::OnDownloadCompleted(const base::FilePath& file_path) {
        // Replace stored data.
        STGMEDIUM storage =
            CreateStorageForFileNames({FileInfo(file_path, base::FilePath())});
@@ -626,7 +644,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
        // If medium is NULL, delay-rendering will be used.
        if (content->medium.tymed != TYMED_NULL) {
          *medium =
-@@ -926,19 +1248,37 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
+@@ -926,19 +1249,37 @@ HRESULT DataObjectImpl::GetData(FORMATETC* format_etc, STGMEDIUM* medium) {
      }
    }
  
@@ -664,7 +682,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
    return DV_E_FORMATETC;
  }
  
-@@ -950,6 +1290,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
+@@ -950,6 +1291,8 @@ HRESULT DataObjectImpl::GetCanonicalFormatEtc(
  
  HRESULT DataObjectImpl::SetData(
      FORMATETC* format_etc, STGMEDIUM* medium, BOOL should_release) {
@@ -673,7 +691,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
    RemoveData(*format_etc);
  
    // If `should_release` is true, ownership of the original data in `medium` is
-@@ -998,26 +1340,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
+@@ -998,26 +1341,31 @@ HRESULT DataObjectImpl::EnumDAdvise(IEnumSTATDATA** enumerator) {
  
  HRESULT DataObjectImpl::EndOperation(
      HRESULT result, IBindCtx* reserved, DWORD effects) {
@@ -705,7 +723,7 @@ index 4fdfcbe7e0199e68f1e82cadf032c36054a659f4..38ca76a7d77e330e134bcc36c76be8c5
    async_operation_started_ = true;
    return S_OK;
  }
-@@ -1029,11 +1376,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
+@@ -1029,11 +1377,17 @@ HRESULT DataObjectImpl::QueryInterface(const IID& iid, void** object) {
    if (!object)
      return E_POINTER;
    if (IsEqualIID(iid, IID_IDataObject) || IsEqualIID(iid, IID_IUnknown)) {
