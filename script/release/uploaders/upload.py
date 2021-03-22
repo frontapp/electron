@@ -19,10 +19,10 @@ sys.path.append(
 
 from io import StringIO
 from zipfile import ZipFile
-from lib.config import PLATFORM, get_target_arch,  get_env_var, s3_config, \
+from lib.config import PLATFORM, get_target_arch,  get_env_var, \
                        get_zip_name, enable_verbose_mode, get_platform_key
 from lib.util import get_electron_branding, execute, get_electron_version, \
-                     scoped_cwd, s3put, get_electron_exec, \
+                     scoped_cwd, get_electron_exec, \
                      get_out_dir, SRC_DIR, ELECTRON_DIR
 
 
@@ -41,6 +41,12 @@ PDB_NAME = get_zip_name(PROJECT_NAME, ELECTRON_VERSION, 'pdb')
 DEBUG_NAME = get_zip_name(PROJECT_NAME, ELECTRON_VERSION, 'debug')
 TOOLCHAIN_PROFILE_NAME = get_zip_name(PROJECT_NAME, ELECTRON_VERSION, 'toolchain-profile')
 
+def s3_config():
+  return 'dl.frontapp.com', '', ''
+
+def s3put(bucket, access_key, secret_key, prefix, key_prefix, files):
+  for file in files:
+    print('aws s3 cp %s s3://%s/%s/%s' % (file, bucket, key_prefix, os.path.basename(file)))
 
 def main():
   args = parse_args()
@@ -323,7 +329,7 @@ def upload_electron(release, file_path, args):
           key_prefix, [file_path])
     upload_sha256_checksum(args.version, file_path, key_prefix)
     s3url = 'https://gh-contractor-zcbenz.s3.amazonaws.com'
-    print('{0} uploaded to {1}/{2}/{0}'.format(filename, s3url, key_prefix))
+    # print('{0} uploaded to {1}/{2}/{0}'.format(filename, s3url, key_prefix))
     return
 
   # Upload the file.
